@@ -1,0 +1,874 @@
+diff --git a/packages/bundle/web-app/cordis.patch.yml b/packages/bundle/web-app/cordis.patch.yml
+index 1001f12bba..3573aa535f 100644
+--- a/packages/bundle/web-app/cordis.patch.yml
++++ b/packages/bundle/web-app/cordis.patch.yml
+@@ -195,6 +195,9 @@
+     - id: ui-settings-models
+       name: '@deepseek-ai/dsh-client-ui-settings-models'
+ 
++    - id: dsh-uo-reasoning-effort
++      name: '@dsh-uo/client-ui-reasoning-effort'
++
+     - id: ui-settings-plugin-inventory
+       name: '@deepseek-ai/dsh-client-ui-settings-plugin-inventory'
+ 
+diff --git a/packages/bundle/web-app/package.json b/packages/bundle/web-app/package.json
+index 7cf224e067..749468e053 100644
+--- a/packages/bundle/web-app/package.json
++++ b/packages/bundle/web-app/package.json
+@@ -44,6 +44,7 @@
+     }
+   },
+   "dependencies": {
++    "@dsh-uo/client-ui-reasoning-effort": "workspace:^",
+     "@dsh-uo/client-ui-upstream-status": "workspace:^",
+     "@deepseek-ai/dsh-agent-presets": "workspace:^",
+     "@deepseek-ai/dsh-api-remotes": "workspace:^",
+diff --git a/packages/client/ui-settings-models/src/client/CustomProviderCard.tsx b/packages/client/ui-settings-models/src/client/CustomProviderCard.tsx
+index 617c4450d5..0d2fb504c6 100644
+--- a/packages/client/ui-settings-models/src/client/CustomProviderCard.tsx
++++ b/packages/client/ui-settings-models/src/client/CustomProviderCard.tsx
+@@ -14,20 +14,19 @@
+  * and at least one model — are required here rather than at load, so the
+  * failure names the field while the user is still looking at it.
+  *
+- * There is deliberately no reasoning-effort control, here or on the editor
+- * card: effort is a per-MODEL capability, and the models under one provider
+- * disagree about it, so a provider-scoped control can only be set to a value
+- * some of them reject. The composer's model picker offers each model its own
+- * levels instead.
++ * Reasoning effort stays a per-MODEL capability. Model rows expose a narrow
++ * extension slot so an optional editor can configure each model without
++ * adding a provider-scoped value that some models reject.
+  */
+ 
+ import { useState } from 'react'
+ import type { ReactNode } from 'react'
+ import type { IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
++import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
+ import { apiKeyFailure } from './apiKey.ts'
+ import { EditorFooter } from './EditorFooter.tsx'
+ import { validateDeepSeekModels } from './DeepSeekModelsEditor.tsx'
+-import { ModelListEditor } from './ModelListEditor.tsx'
++import { ModelListEditor, validateModelReasoning } from './ModelListEditor.tsx'
+ import type { ModelDraft } from './ModelListEditor.tsx'
+ import { deriveKeyRef, messageOf } from './store.ts'
+ import type { en } from './locales.ts'
+@@ -62,6 +61,8 @@ export interface CustomProviderCardProps {
+   api: Pick<IApiClient, 'settings' | 'credentials' | 'llm'>
+   /** Section copy. */
+   t: (key: keyof typeof en) => string
++  /** Model-row child-slot renderer delegated by the Models section. */
++  renderSlot?: PropsRenderSlots<'settings.models.model.reasoning'>['renderSlot']
+   /** Disable writes (read-only settings provider). */
+   readOnly: boolean
+   /** Close the card; `changed` reports whether a provider was created. */
+@@ -101,7 +102,7 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
+   // Rows are checked by the same per-row validator the editor cards use, so a
+   // bad row is named by its position here too. Capacities have route-level
+   // fallbacks; what a route cannot default is at least one model.
+-  const modelFailure = validateDeepSeekModels(models)
++  const modelFailure = validateDeepSeekModels(models) ?? validateModelReasoning(models)
+   const keyFailure = apiKeyFailure(keyDraft)
+   // The typed key with paste whitespace removed. A blank field yields an empty
+   // string, which the create path reads as "no key supplied" — a route may
+@@ -267,6 +268,8 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
+       <ModelListEditor
+         models={models}
+         onChange={setModels}
++        customProvider
++        {...props.renderSlot === undefined ? {} : { renderSlot: props.renderSlot }}
+         probe={{
+           settingsNs: NS,
+           baseURL,
+diff --git a/packages/client/ui-settings-models/src/client/ModelListEditor.tsx b/packages/client/ui-settings-models/src/client/ModelListEditor.tsx
+index 6d88484ac5..93230e3451 100644
+--- a/packages/client/ui-settings-models/src/client/ModelListEditor.tsx
++++ b/packages/client/ui-settings-models/src/client/ModelListEditor.tsx
+@@ -18,6 +18,7 @@ import { useState } from 'react'
+ import type { ReactNode } from 'react'
+ import type { DiscoveredModelView, IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
+ import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
++import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
+ import { formatCapacity, parseCapacity } from './DeepSeekModelsEditor.tsx'
+ import type { DeepSeekModelDraft } from './DeepSeekModelsEditor.tsx'
+ import { messageOf } from './store.ts'
+@@ -32,6 +33,41 @@ import styles from './ModelsSection.module.css'
+  */
+ export type ModelDraft = DeepSeekModelDraft
+ 
++/** Canonical effort ids accepted by the pi-ai model schema. */
++const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
++
++/** A localized reasoning-map failure for one model row. */
++export interface ModelReasoningValidationFailure {
++  /** Zero-based model position. */
++  index: number
++  /** Message key owned by the Models settings section. */
++  key: 'modelReasoningInvalid'
++}
++
++/** Validate the llm-pi-ai constraints that the editable mapping must satisfy. */
++export function validateModelReasoning(value: unknown): ModelReasoningValidationFailure | undefined {
++  if (!Array.isArray(value)) return undefined
++  const known = new Set<string>(REASONING_LEVELS)
++  for (const [index, entry] of value.entries()) {
++    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue
++    const efforts = (entry as Record<string, unknown>)['reasoningEfforts']
++    if (efforts === undefined || efforts === false) continue
++    if (typeof efforts !== 'object' || efforts === null || Array.isArray(efforts)) {
++      return { index, key: 'modelReasoningInvalid' }
++    }
++    const rows = Object.entries(efforts)
++    let hasThinkingLevel = false
++    for (const [level, wire] of rows) {
++      if (!known.has(level)) return { index, key: 'modelReasoningInvalid' }
++      if (level === 'off' && wire === null) continue
++      if (level !== 'off') hasThinkingLevel = true
++      if (typeof wire !== 'string' || wire.length === 0) return { index, key: 'modelReasoningInvalid' }
++    }
++    if (!hasThinkingLevel) return { index, key: 'modelReasoningInvalid' }
++  }
++  return undefined
++}
++
+ /** A row's text field, or the empty string when unset or not a string. */
+ function textOf(model: ModelDraft, key: string): string {
+   const value = model[key]
+@@ -62,12 +98,36 @@ export interface ProbeTarget {
+   apiKey?: string
+ }
+ 
++/** Owner props supplied to the optional per-model reasoning slot. */
++export interface ModelReasoningOwnerProps {
++  /** Complete model draft; slot occupants must preserve fields they do not own. */
++  model: Readonly<Record<string, unknown>>
++  /** One-based row number used by accessible labels. */
++  position: number
++  /** Provider protocol currently shown by the parent form. */
++  protocol?: string
++  /** Whether this model belongs to a hand-declared custom provider. */
++  customProvider: boolean
++  /** Whether the reasoning fold is open. */
++  open: boolean
++  /** Disable every mutation. */
++  disabled: boolean
++  /** Toggle the reasoning fold. */
++  onToggle: () => void
++  /** Replace the complete model draft. */
++  onChange: (model: Record<string, unknown>) => void
++}
++
+ /** Props of {@link ModelListEditor}. */
+ export interface ModelListEditorProps {
+   /** The rows as currently drafted. */
+   models: readonly ModelDraft[]
+   /** Whether the user layer currently owns the whole array; absent on a create. */
+   overridden?: boolean
++  /** Whether these rows belong to a hand-declared custom provider. */
++  customProvider?: boolean
++  /** Narrow renderer delegated from the Models section slot owner. */
++  renderSlot?: PropsRenderSlots<'settings.models.model.reasoning'>['renderSlot']
+   /** Replace the drafted rows. */
+   onChange: (models: ModelDraft[]) => void
+   /** Remove the user-owned array and return to inheritance; absent on a create. */
+@@ -164,9 +224,10 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+   const [failure, setFailure] = useState<string | undefined>(undefined)
+   const [candidates, setCandidates] = useState<readonly DiscoveredModelView[] | undefined>(undefined)
+   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
+-  // Rows carry an id and a name; capacities are the exception, so they stay
+-  // folded until asked for rather than crowding every row with four inputs.
++  // One row can stay open while another is inspected; Basic and the optional
++  // reasoning plugin fold independently inside it.
+   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
++  const [openSections, setOpenSections] = useState<ReadonlySet<string>>(new Set())
+   // Capacities are edited as text, so a field's keystrokes are held here rather
+   // than re-derived from the parsed count on every change — that would rewrite
+   // `1000` to `1K` mid-word. Unreadable text is kept past blur so the refusal
+@@ -203,14 +264,27 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+   }
+ 
+   const toggleExpanded = (index: number): void => {
++    const opening = !expanded.has(index)
+     setExpanded((current) => {
+       const next = new Set(current)
+       if (!next.delete(index)) next.add(index)
+       return next
+     })
++    if (opening && props.customProvider === true) {
++      setOpenSections((current) => new Set(current).add(`${String(index)}:reasoning`))
++    }
++  }
++
++  const toggleSection = (index: number, section: 'basic' | 'reasoning'): void => {
++    const key = `${String(index)}:${section}`
++    setOpenSections((current) => {
++      const next = new Set(current)
++      if (!next.delete(key)) next.add(key)
++      return next
++    })
+   }
+ 
+-  const patch = (index: number, next: Record<string, string | number | undefined>): void => {
++  const patch = (index: number, next: Record<string, unknown>): void => {
+     onChange(models.map((model, at) => {
+       if (at !== index) return model
+       // Rebuilt rather than spread over: an emptied optional field has to leave
+@@ -383,6 +457,16 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+                   return next
+                 })
+                 setEditing(current => reindexOnRemove(current, index))
++                setOpenSections((current) => {
++                  const next = new Set<string>()
++                  for (const key of current) {
++                    const separator = key.indexOf(':')
++                    const at = Number(key.slice(0, separator))
++                    if (at === index) continue
++                    next.add(at > index ? `${String(at - 1)}${key.slice(separator)}` : key)
++                  }
++                  return next
++                })
+               }}
+             >
+               <IconTrash />
+@@ -390,33 +474,67 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+           </div>
+           {expanded.has(index)
+             ? (
+-              <div className={styles['modelAdvanced']}>
+-                <label className={styles['modelField']}>
+-                  <span className={styles['modelFieldLabel']}>{t('modelContextWindow')}</span>
+-                  <input
+-                    className={styles['input']}
+-                    type="text"
+-                    inputMode="numeric"
+-                    value={capacityText(model, index, 'contextWindow')}
+-                    placeholder={CAPACITY_HINT.contextWindow}
+-                    aria-label={`${t('modelContextWindow')} ${index + 1}`}
+-                    disabled={disabled}
+-                    onChange={(event) => { editCapacity(index, 'contextWindow', event.target.value) }}
+-                  />
+-                </label>
+-                <label className={styles['modelField']}>
+-                  <span className={styles['modelFieldLabel']}>{t('modelMaxTokens')}</span>
+-                  <input
+-                    className={styles['input']}
+-                    type="text"
+-                    inputMode="numeric"
+-                    value={capacityText(model, index, 'maxTokens')}
+-                    placeholder={CAPACITY_HINT.maxTokens}
+-                    aria-label={`${t('modelMaxTokens')} ${index + 1}`}
+-                    disabled={disabled}
+-                    onChange={(event) => { editCapacity(index, 'maxTokens', event.target.value) }}
+-                  />
+-                </label>
++              <div className={styles['modelSettings']}>
++                <section className={styles['modelFold']}>
++                  <button
++                    type="button"
++                    className={styles['modelFoldToggle']}
++                    aria-expanded={openSections.has(`${String(index)}:basic`)}
++                    onClick={() => { toggleSection(index, 'basic') }}
++                  >
++                    <IconChevron open={openSections.has(`${String(index)}:basic`)} />
++                    <span>{t('modelBasic')}</span>
++                    <span className={styles['modelFoldMeta']}>
++                      {`${capacityText(model, index, 'contextWindow') || CAPACITY_HINT.contextWindow} · ${capacityText(model, index, 'maxTokens') || CAPACITY_HINT.maxTokens}`}
++                    </span>
++                  </button>
++                  {openSections.has(`${String(index)}:basic`)
++                    ? (
++                      <div className={styles['modelFoldBody']}>
++                        <div className={styles['modelAdvanced']}>
++                          <label className={styles['modelField']}>
++                            <span className={styles['modelFieldLabel']}>{t('modelContextWindow')}</span>
++                            <input
++                              className={styles['input']}
++                              type="text"
++                              inputMode="numeric"
++                              value={capacityText(model, index, 'contextWindow')}
++                              placeholder={CAPACITY_HINT.contextWindow}
++                              aria-label={`${t('modelContextWindow')} ${index + 1}`}
++                              disabled={disabled}
++                              onChange={(event) => { editCapacity(index, 'contextWindow', event.target.value) }}
++                            />
++                          </label>
++                          <label className={styles['modelField']}>
++                            <span className={styles['modelFieldLabel']}>{t('modelMaxTokens')}</span>
++                            <input
++                              className={styles['input']}
++                              type="text"
++                              inputMode="numeric"
++                              value={capacityText(model, index, 'maxTokens')}
++                              placeholder={CAPACITY_HINT.maxTokens}
++                              aria-label={`${t('modelMaxTokens')} ${index + 1}`}
++                              disabled={disabled}
++                              onChange={(event) => { editCapacity(index, 'maxTokens', event.target.value) }}
++                            />
++                          </label>
++                        </div>
++                      </div>
++                    )
++                    : null}
++                </section>
++                {props.renderSlot?.('settings.models.model.reasoning', {
++                  model,
++                  position: index + 1,
++                  ...probe.api === undefined ? {} : { protocol: probe.api },
++                  customProvider: props.customProvider === true,
++                  open: openSections.has(`${String(index)}:reasoning`),
++                  disabled,
++                  onToggle: () => { toggleSection(index, 'reasoning') },
++                  onChange: (next) => {
++                    onChange(models.map((entry, at) => at === index ? next : entry))
++                  },
++                })}
+               </div>
+             )
+             : null}
+diff --git a/packages/client/ui-settings-models/src/client/ModelsSection.module.css b/packages/client/ui-settings-models/src/client/ModelsSection.module.css
+index 5203524517..356d9f82fe 100644
+--- a/packages/client/ui-settings-models/src/client/ModelsSection.module.css
++++ b/packages/client/ui-settings-models/src/client/ModelsSection.module.css
+@@ -503,7 +503,50 @@
+   display: grid;
+   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+   gap: 8px;
+-  padding: 8px 4px 2px;
++}
++
++.modelSettings {
++  margin-top: 6px;
++  border-top: 1px solid var(--dsw-alias-border-l2);
++}
++
++.modelFold + .modelFold {
++  border-top: 1px solid var(--dsw-alias-border-l2);
++}
++
++.modelFoldToggle {
++  box-sizing: border-box;
++  display: grid;
++  grid-template-columns: 16px minmax(0, 1fr) auto;
++  align-items: center;
++  gap: 8px;
++  width: 100%;
++  min-height: 38px;
++  padding: 5px 4px;
++  border: none;
++  background: transparent;
++  color: var(--dsw-alias-label-primary);
++  font: inherit;
++  font-size: 12px;
++  line-height: 18px;
++  text-align: left;
++  cursor: pointer;
++}
++
++.modelFoldToggle:hover {
++  background: var(--dsw-alias-interactive-bg-hover);
++}
++
++.modelFoldMeta {
++  min-width: 0;
++  color: var(--dsw-alias-label-tertiary);
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.modelFoldBody {
++  padding: 4px 4px 10px 24px;
+ }
+ 
+ .modelField {
+@@ -547,6 +590,25 @@
+   background: var(--dsw-alias-interactive-bg-hover);
+ }
+ 
++@media (max-width: 520px) {
++  .modelRow {
++    grid-template-columns: minmax(0, 1fr) auto auto;
++  }
++
++  .modelRow > input:nth-child(2) {
++    grid-column: 1;
++  }
++
++  .modelFoldBody {
++    padding-left: 16px;
++  }
++
++  .modelFoldMeta {
++    display: none;
++  }
++
++}
++
+ .input {
+   box-sizing: border-box;
+   width: 100%;
+diff --git a/packages/client/ui-settings-models/src/client/ModelsSection.tsx b/packages/client/ui-settings-models/src/client/ModelsSection.tsx
+index 5fe5647b88..9520219991 100644
+--- a/packages/client/ui-settings-models/src/client/ModelsSection.tsx
++++ b/packages/client/ui-settings-models/src/client/ModelsSection.tsx
+@@ -16,6 +16,7 @@ import { useState } from 'react'
+ import type { ReactNode } from 'react'
+ import type { IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
+ import { Button, IconPlusOutline16, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
++import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
+ import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-web-react'
+ import { CustomProviderCard } from './CustomProviderCard.tsx'
+ import { deriveKeyRef, messageOf, protocolChoices, providerUsable } from './store.ts'
+@@ -40,7 +41,9 @@ export interface ModelsSectionInjected {
+  * Props delivered by the slot outlet: the inject face spread flat (the
+  * renderer erases the share boundary at the render call).
+  */
+-export type ModelsSectionProps = Partial<ModelsSectionInjected>
++export type ModelsSectionProps =
++  & Partial<ModelsSectionInjected>
++  & Partial<PropsRenderSlots<'settings.models.model.reasoning'>>
+ 
+ /** Provider identity shared by row actions and confirmation copy. */
+ export interface ProviderIdentity {
+@@ -63,7 +66,7 @@ interface EditorTarget extends ProviderIdentity {
+ /** Values that vary around the shared provider-editor rendering. */
+ interface ProviderEditorRenderProps extends Pick<
+   ProviderEditorProps,
+-  'namespace' | 'api' | 't' | 'readOnly' | 'onClose'
++  'namespace' | 'api' | 't' | 'readOnly' | 'onClose' | 'renderSlot'
+ > {
+   target: EditorTarget
+ }
+@@ -169,12 +172,20 @@ export function providerCopy(template: string, target: ProviderIdentity): string
+  * @returns the section, or null while the shell has not injected yet.
+  */
+ export function ModelsSection(props: ModelsSectionProps): ReactNode {
+-  const { controller, useSnapshot, api, t } = props
++  const { controller, useSnapshot, api, t, renderSlot } = props
+   if (controller === undefined || useSnapshot === undefined || api === undefined || t === undefined) return null
+-  return <Loaded injected={{ controller, useSnapshot, api, t }} />
++  return (
++    <Loaded
++      injected={{ controller, useSnapshot, api, t }}
++      {...renderSlot === undefined ? {} : { renderSlot }}
++    />
++  )
+ }
+ 
+-function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
++function Loaded({ injected, renderSlot }: {
++  injected: ModelsSectionInjected
++  renderSlot?: PropsRenderSlots<'settings.models.model.reasoning'>['renderSlot']
++}): ReactNode {
+   const { controller, api, t } = injected
+   const state = injected.useSnapshot(snapshot => snapshot)
+   const [editing, setEditing] = useState<EditorTarget | undefined>(undefined)
+@@ -299,6 +310,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
+                   namespace,
+                   api,
+                   t,
++                  ...renderSlot === undefined ? {} : { renderSlot },
+                   readOnly: !state.writable,
+                   onClose: (changed) => { closeSetup(changed, target) },
+                 })}
+@@ -383,6 +395,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
+                   namespace,
+                   api,
+                   t,
++                  ...renderSlot === undefined ? {} : { renderSlot },
+                   readOnly: !state.writable,
+                   onClose: (changed) => { closeEditor(changed, target) },
+                 })
+@@ -422,6 +435,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
+                 settingsPath={addTarget.settingsPath}
+                 api={api}
+                 t={t}
++                {...renderSlot === undefined ? {} : { renderSlot }}
+                 readOnly={!state.writable}
+                 onClose={(changed) => { closeEditor(changed, addTarget) }}
+               />
+@@ -437,6 +451,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
+                   revision={state.namespaces.get('llm-pi-ai')?.revision ?? 0}
+                   api={api}
+                   t={t}
++                  {...renderSlot === undefined ? {} : { renderSlot }}
+                   readOnly={!state.writable}
+                   onClose={(changed) => {
+                     setDeclaring(false)
+diff --git a/packages/client/ui-settings-models/src/client/ProviderEditor.tsx b/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
+index 63d25b2eb6..22e9115ae3 100644
+--- a/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
++++ b/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
+@@ -11,12 +11,11 @@
+  * display name and wire protocol of a pi-ai route the adapter does not ship —
+  * the two fields the create card asked that route for, editable here for the
+  * same reason).
+- * Reasoning effort is deliberately absent: it is a per-MODEL capability, and
+- * the models under one provider disagree about it, so a provider-scoped
+- * control can only be set to a value some of them reject. The composer's
+- * model picker offers each model its own levels; `settings.yaml` keeps the
+- * profile field for a deployment that knows its route. Everything else stays
+- * owned by `settings.yaml`. Profile edits land as minimal `settings.mutate`
++ * Reasoning effort stays a per-MODEL capability because models under one
++ * provider can disagree about it. The model rows expose a narrow extension
++ * slot for an optional editor while this package retains the draft and save
++ * validation. Everything else stays owned by `settings.yaml`. Profile edits
++ * land as minimal `settings.mutate`
+  * path ops against the stored section — the card names only the fields it can
+  * see instead of rebuilding the whole subtree from a partial descriptor.
+  */
+@@ -27,12 +26,13 @@ import type { CredentialView, IApiClient, SettingsNamespaceView, SettingsPathOpV
+ import {
+   deletePath, getPath, hasPath, nodeAtPath, rehydrateSchema, setPath, validateDraft,
+ } from '@deepseek-ai/dsh-client-schema-form'
++import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
+ import {
+   DeepSeekModelsEditor, modelDrafts, validateDeepSeekModels,
+ } from './DeepSeekModelsEditor.tsx'
+ import { apiKeyFailure } from './apiKey.ts'
+ import { EditorFooter } from './EditorFooter.tsx'
+-import { ModelListEditor } from './ModelListEditor.tsx'
++import { ModelListEditor, validateModelReasoning } from './ModelListEditor.tsx'
+ import { deriveKeyRef, messageOf, protocolChoices } from './store.ts'
+ import type { en } from './locales.ts'
+ import styles from './ModelsSection.module.css'
+@@ -67,6 +67,8 @@ export interface ProviderEditorProps {
+   api: Pick<IApiClient, 'settings' | 'credentials' | 'llm'>
+   /** Section copy. */
+   t: (key: keyof typeof en) => string
++  /** Model-row child-slot renderer delegated by the Models section. */
++  renderSlot?: PropsRenderSlots<'settings.models.model.reasoning'>['renderSlot']
+   /** Disable writes (read-only settings provider). */
+   readOnly: boolean
+   /** Render only the credential field and actions, without provider settings. */
+@@ -204,6 +206,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
+   // The model list is validated by the same per-row checker for both families,
+   // so a bad row is named by its position rather than by a blanket message.
+   const modelFailure = validateDeepSeekModels(getPath(draft, ['models']))
++    ?? validateModelReasoning(getPath(draft, ['models']))
+   const keyFailure = apiKeyFailure(keyDraft)
+   // What a probe or a write must carry: the typed key with paste whitespace
+   // removed. A blank field yields an empty string, which both call sites read
+@@ -248,6 +251,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
+       // the write with a message naming a path instead of the row, and because
+       // nothing but this function decides what is written.
+       const failure = validateDeepSeekModels(getPath(next, ['models']))
++        ?? validateModelReasoning(getPath(next, ['models']))
+       /* v8 ignore next 3 -- unreachable from the card: the same failure disables submit */
+       if (failure !== undefined) {
+         return `${t('model')} ${String(failure.index + 1)}: ${t(failure.key)}`
+@@ -460,7 +464,16 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
+                   defaultMaxTokens={typeof defaultMaxTokens === 'number' ? defaultMaxTokens : undefined}
+                 />
+               )
+-              : <ModelListEditor {...catalogProps} probe={probe} probeBlocked={keyFailure} api={api} />}
++              : (
++                <ModelListEditor
++                  {...catalogProps}
++                  customProvider={props.declared === true}
++                  {...props.renderSlot === undefined ? {} : { renderSlot: props.renderSlot }}
++                  probe={probe}
++                  probeBlocked={keyFailure}
++                  api={api}
++                />
++              )}
+           </div>
+         </details>}
+       </>
+diff --git a/packages/client/ui-settings-models/src/client/index.ts b/packages/client/ui-settings-models/src/client/index.ts
+index dc7f32e370..b1fe623eda 100644
+--- a/packages/client/ui-settings-models/src/client/index.ts
++++ b/packages/client/ui-settings-models/src/client/index.ts
+@@ -18,6 +18,7 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
+ import type {} from '@deepseek-ai/dsh-api-remotes/client'
+ import { ModelsSection } from './ModelsSection.tsx'
+ import type { ModelsSectionInjected } from './ModelsSection.tsx'
++import type { ModelReasoningOwnerProps } from './ModelListEditor.tsx'
+ import { DeepSeekOnboardingDialog } from './DeepSeekOnboardingDialog.tsx'
+ import type { DeepSeekOnboardingInjected } from './DeepSeekOnboardingDialog.tsx'
+ import { WelcomeNotice } from './WelcomeNotice.tsx'
+@@ -31,6 +32,14 @@ export type { ModelsSectionInjected, ModelsSectionProps } from './ModelsSection.
+ export type { ModelsKey } from './locales.ts'
+ 
+ declare module '@deepseek-ai/dsh-client-ui-slots' {
++  interface SlotMap {
++    /** Optional per-model reasoning capability editor inside the Models page. */
++    'settings.models.model.reasoning': {
++      kind: 'single'
++      scope: 'root'
++      owner: ModelReasoningOwnerProps
++    }
++  }
+   interface LocaleNamespaceMap {
+     /** The Models page + product-onboarding copy. */
+     'settings.models': ModelsKey
+@@ -121,6 +130,9 @@ export function apply(ctx: ClientContext): void {
+     order: 10,
+     label: () => t('nav'),
+     inject: injected,
++    children: {
++      'settings.models.model.reasoning': { kind: 'single', scope: 'root' },
++    },
+   }, ModelsSection))
+   ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
+     name: 'settings.onboarding',
+diff --git a/packages/client/ui-settings-models/src/client/locales.ts b/packages/client/ui-settings-models/src/client/locales.ts
+index a49a4f0ef2..d3dbfd34f4 100644
+--- a/packages/client/ui-settings-models/src/client/locales.ts
++++ b/packages/client/ui-settings-models/src/client/locales.ts
+@@ -49,7 +49,8 @@ export const en = {
+   contextWindowPlaceholder: 'Uses the provider default',
+   maxTokens: 'Max output tokens',
+   maxTokensPlaceholder: 'Uses the provider default',
+-  modelAdvanced: 'Capacities',
++  modelAdvanced: 'Model settings',
++  modelBasic: 'Basic parameters',
+   addModel: 'Add model',
+   removeModel: 'Delete model',
+   modelsEmpty: 'No models will be shown in the selector. Unlisted IDs can still be sent directly.',
+@@ -61,6 +62,7 @@ export const en = {
+   modelNameInvalid: 'Display name cannot be empty.',
+   modelContextInvalid: 'Context window must be a positive count, like 131072, 256K, or 1M.',
+   modelMaxTokensInvalid: 'Max output tokens must be a positive count, like 8192, 64K, or 1M.',
++  modelReasoningInvalid: 'Reasoning effort needs at least one non-off level, and every enabled level needs a request value.',
+   advancedHint: 'Other fields live in settings.yaml; edit that section directly.',
+   modelCapacityInvalid: 'A capacity must be a number, optionally suffixed K or M.',
+   modelDuplicate: 'Each model ID may appear once.',
+@@ -149,7 +151,8 @@ export const zh: { [Key in keyof typeof en]: string } = {
+   contextWindowPlaceholder: '使用提供方默认值',
+   maxTokens: '最大输出 token 数',
+   maxTokensPlaceholder: '使用提供方默认值',
+-  modelAdvanced: '容量',
++  modelAdvanced: '模型设置',
++  modelBasic: '基础参数',
+   addModel: '添加模型',
+   removeModel: '删除模型',
+   modelsEmpty: '模型选择器中将不显示任何模型；目录外 ID 仍可直接发送。',
+@@ -161,6 +164,7 @@ export const zh: { [Key in keyof typeof en]: string } = {
+   modelNameInvalid: '显示名称不能为空。',
+   modelContextInvalid: '上下文窗口必须是正数，例如 131072、256K 或 1M。',
+   modelMaxTokensInvalid: '最大输出 token 数必须是正数，例如 8192、64K 或 1M。',
++  modelReasoningInvalid: '思考强度至少需要一个非 off 档位，并且每个启用档位都要填写请求值。',
+   advancedHint: '其余字段在 settings.yaml 中，请直接编辑对应段。',
+   modelCapacityInvalid: '容量需为数字，可加 K 或 M 后缀。',
+   modelDuplicate: '每个模型 ID 只能出现一次。',
+diff --git a/packages/client/ui-settings-models/tests/provider-form.client.spec.tsx b/packages/client/ui-settings-models/tests/provider-form.client.spec.tsx
+index 246c7d64b1..0bed6a70f3 100644
+--- a/packages/client/ui-settings-models/tests/provider-form.client.spec.tsx
++++ b/packages/client/ui-settings-models/tests/provider-form.client.spec.tsx
+@@ -6,9 +6,11 @@ import Schema from '@deepseek-ai/schemastery'
+ import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-web-react'
+ import type { RpcResponse, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
+ import { ModelsSection, providerCopy } from '../src/client/ModelsSection.tsx'
+-import type { ModelsSectionInjected } from '../src/client/ModelsSection.tsx'
++import type { ModelsSectionInjected, ModelsSectionProps } from '../src/client/ModelsSection.tsx'
+ import { CustomProviderCard } from '../src/client/CustomProviderCard.tsx'
+ import { formatCapacity, parseCapacity } from '../src/client/DeepSeekModelsEditor.tsx'
++import { validateModelReasoning } from '../src/client/ModelListEditor.tsx'
++import type { ModelReasoningOwnerProps } from '../src/client/ModelListEditor.tsx'
+ import { ModelsSettingsStore, deriveKeyRef, protocolChoices } from '../src/client/store.ts'
+ import { en } from '../src/client/locales.ts'
+ 
+@@ -31,6 +33,19 @@ const PiAiConfig = Schema.object({
+       name: Schema.string(),
+       contextWindow: Schema.number(),
+       maxTokens: Schema.number(),
++      reasoningEfforts: Schema.union([
++        Schema.const(false),
++        Schema.dict(
++          Schema.union([Schema.string(), Schema.const(null)]),
++          Schema.union(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
++        ),
++      ]),
++      compat: Schema.object({
++        thinkingFormat: Schema.union([
++          'openai', 'deepseek', 'openrouter', 'together', 'zai', 'qwen', 'string-thinking', 'ant-ling',
++        ]),
++        supportsReasoningEffort: Schema.boolean(),
++      }),
+     })),
+     reasoning: Schema.union(['off', 'high']),
+   })),
+@@ -137,7 +152,10 @@ function firstMutate(mutate: ReturnType<typeof vi.fn>): MutateCall {
+   return call
+ }
+ 
+-async function mountSection(options: Parameters<typeof scriptedFace>[0] = {}) {
++async function mountSection(
++  options: Parameters<typeof scriptedFace>[0] = {},
++  renderSlot?: ModelsSectionProps['renderSlot'],
++) {
+   const scripted = scriptedFace(options)
+   const controller = new ModelsSettingsStore(scripted.face as unknown as WireFace)
+   await controller.load()
+@@ -147,7 +165,7 @@ async function mountSection(options: Parameters<typeof scriptedFace>[0] = {}) {
+     api: scripted.face as never,
+     t,
+   }
+-  render(<ModelsSection {...injected} />)
++  render(<ModelsSection {...injected} {...renderSlot === undefined ? {} : { renderSlot }} />)
+   return { ...scripted, controller }
+ }
+ 
+@@ -161,9 +179,18 @@ function openEditor(provider: string): void {
+   fireEvent.click(summary)
+ }
+ 
+-/** Open one model row's advanced fold, where the capacities live. */
++/** Toggle one model row; when opening, open its nested capacity fold too. */
+ function expandModel(index: number): void {
+-  fireEvent.click(screen.getByLabelText(`${en.modelAdvanced} ${index}`))
++  const outer = screen.getByLabelText(`${en.modelAdvanced} ${index}`)
++  const opening = outer.getAttribute('aria-expanded') !== 'true'
++  fireEvent.click(outer)
++  if (!opening) return
++  const input = screen.getByLabelText(`${en.modelId} ${index}`)
++  const entry = input.parentElement?.parentElement
++  const basic = [...(entry?.querySelectorAll('button') ?? [])]
++    .find(button => button.textContent?.includes(en.modelBasic))
++  if (basic === undefined) throw new Error(`no basic fold for model ${index}`)
++  fireEvent.click(basic)
+ }
+ 
+ /** The button carrying `label`, typed so its disabled/title state is readable. */
+@@ -192,6 +219,15 @@ describe('protocolChoices', () => {
+ })
+ 
+ describe('model list editing', () => {
++  it('rejects an empty or off-only custom reasoning map', () => {
++    expect(validateModelReasoning([{ id: 'm', reasoningEfforts: {} }]))
++      .toEqual({ index: 0, key: 'modelReasoningInvalid' })
++    expect(validateModelReasoning([{ id: 'm', reasoningEfforts: { off: null } }]))
++      .toEqual({ index: 0, key: 'modelReasoningInvalid' })
++    expect(validateModelReasoning([{ id: 'm', reasoningEfforts: { off: null, high: 'high' } }]))
++      .toBeUndefined()
++  })
++
+   it('adds, edits, and removes rows without storing emptied optional fields', async () => {
+     const { mutate } = await mountSection()
+     openEditor('openai')
+@@ -213,6 +249,51 @@ describe('model list editing', () => {
+     })
+   })
+ 
++  it('delegates custom-provider rows to the reasoning slot with independent open state', async () => {
++    const renderSlot = vi.fn((_key: string, owner: ModelReasoningOwnerProps) => (
++      <button type="button" aria-label={`reasoning slot ${String(owner.position)}`} onClick={owner.onToggle}>
++        {owner.open ? 'open' : 'closed'}
++      </button>
++    )) as never
++    await mountSection({
++      providers: {
++        'acme-gateway': {
++          displayName: 'Acme Gateway',
++          api: 'openai-responses',
++          baseURL: 'https://proxy.example/v1',
++          models: [{ id: 'first' }, { id: 'second' }],
++        },
++      },
++      declaredRoutes: ['acme-gateway'],
++    }, renderSlot)
++    openEditor('acme-gateway')
++
++    expandModel(1)
++    expandModel(2)
++    expect(screen.getByLabelText('reasoning slot 1').textContent).toBe('open')
++    expect(screen.getByLabelText('reasoning slot 2').textContent).toBe('open')
++    fireEvent.click(screen.getByLabelText('reasoning slot 1'))
++    expect(screen.getByLabelText('reasoning slot 1').textContent).toBe('closed')
++    expect(screen.getByLabelText('reasoning slot 2').textContent).toBe('open')
++    expect(renderSlot).toHaveBeenCalledWith(
++      'settings.models.model.reasoning',
++      expect.objectContaining({ customProvider: true, position: 1 }),
++    )
++  })
++
++  it('keeps the reasoning slot folded by default for a catalog provider', async () => {
++    const renderSlot = vi.fn((_key: string, owner: ModelReasoningOwnerProps) => (
++      <span data-testid="reasoning-open">{String(owner.open)}</span>
++    )) as never
++    await mountSection({
++      providers: { openai: { models: [{ id: 'catalog-model' }] } },
++    }, renderSlot)
++    openEditor('openai')
++    expandModel(1)
++
++    expect(screen.getByTestId('reasoning-open').textContent).toBe('false')
++  })
++
+   it('names a duplicate model id in the edit flow too', async () => {
+     const { mutate } = await mountSection({
+       providers: { openai: { baseURL: 'https://proxy.example/v1', models: [{ id: 'dup' }] } },
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 5b7f667021..ba48b7dcd3 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -1258,6 +1258,9 @@ importers:
+ 
+   packages/bundle/web-app:
+     dependencies:
++      '@dsh-uo/client-ui-reasoning-effort':
++        specifier: workspace:^
++        version: link:../../client/ui-dsh-uo-reasoning-effort
+       '@dsh-uo/client-ui-upstream-status':
+         specifier: workspace:^
+         version: link:../../client/ui-dsh-uo-upstream-status
+@@ -1990,6 +1993,45 @@ importers:
+         specifier: ^18.2.0
+         version: 18.3.1(react@18.3.1)
+ 
++  packages/client/ui-dsh-uo-reasoning-effort:
++    devDependencies:
++      '@deepseek-ai/cordis':
++        specifier: workspace:^
++        version: link:../../../vendor/cordis
++      '@deepseek-ai/dsh-client-locale':
++        specifier: workspace:^
++        version: link:../locale
++      '@deepseek-ai/dsh-client-runtime':
++        specifier: workspace:^
++        version: link:../runtime
++      '@deepseek-ai/dsh-client-test-runtime':
++        specifier: workspace:^
++        version: link:../../test-support/client-runtime
++      '@deepseek-ai/dsh-client-ui-primitives':
++        specifier: workspace:^
++        version: link:../ui-primitives
++      '@deepseek-ai/dsh-client-ui-settings-models':
++        specifier: workspace:^
++        version: link:../ui-settings-models
++      '@deepseek-ai/dsh-client-ui-slots':
++        specifier: workspace:^
++        version: link:../ui-slots
++      '@deepseek-ai/dsh-invariants':
++        specifier: workspace:^
++        version: link:../../runtime-diagnostics/invariants
++      '@testing-library/react':
++        specifier: ^16.1.0
++        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
++      '@types/react':
++        specifier: ~18.3.1
++        version: 18.3.31
++      react:
++        specifier: ^18.2.0
++        version: 18.3.1
++      react-dom:
++        specifier: ^18.2.0
++        version: 18.3.1(react@18.3.1)
++
+   packages/client/ui-dsh-uo-upstream-status:
+     devDependencies:
+       '@deepseek-ai/cordis':
+diff --git a/tsconfig.client.json b/tsconfig.client.json
+index 8a60fc47ae..7933ad0d57 100644
+--- a/tsconfig.client.json
++++ b/tsconfig.client.json
+@@ -91,6 +91,7 @@
+     { "path": "./packages/client/ui-settings" },
+     { "path": "./packages/client/ui-settings-general" },
+     { "path": "./packages/client/ui-settings-models" },
++    { "path": "./packages/client/ui-dsh-uo-reasoning-effort" },
+     { "path": "./packages/client/ui-settings-plugin-inventory" },
+     { "path": "./packages/client/locale" },
+     { "path": "./packages/client/web" },

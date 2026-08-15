@@ -6,3 +6,5 @@ release/
 resources/runtime/
 *.log
 /TODO.md
+dev.ps1
+.codex/

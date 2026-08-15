@@ -15,17 +15,27 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) {
 }
 
 $manifestPath = Join-Path $projectRoot 'upstream\harness.json'
-$pluginSource = Join-Path $projectRoot 'harness-overrides\packages\client\ui-dsh-uo-upstream-status'
-$patchPath = Join-Path $projectRoot 'harness-overrides\patches\0001-dsh-uo-upstream-status.patch'
+$pluginSources = @(
+  (Join-Path $projectRoot 'harness-overrides\packages\client\ui-dsh-uo-upstream-status'),
+  (Join-Path $projectRoot 'harness-overrides\packages\client\ui-dsh-uo-reasoning-effort')
+)
+$patchPaths = @(
+  (Join-Path $projectRoot 'harness-overrides\patches\0001-dsh-uo-upstream-status.patch'),
+  (Join-Path $projectRoot 'harness-overrides\patches\0002-dsh-uo-reasoning-effort.patch')
+)
 
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
   throw "Harness manifest not found: $manifestPath"
 }
-if (-not (Test-Path -LiteralPath $pluginSource -PathType Container)) {
-  throw "DSH-UO Harness plugin not found: $pluginSource"
+foreach ($pluginSource in $pluginSources) {
+  if (-not (Test-Path -LiteralPath $pluginSource -PathType Container)) {
+    throw "DSH-UO Harness plugin not found: $pluginSource"
+  }
 }
-if (-not (Test-Path -LiteralPath $patchPath -PathType Leaf)) {
-  throw "DSH-UO Harness patch not found: $patchPath"
+foreach ($patchPath in $patchPaths) {
+  if (-not (Test-Path -LiteralPath $patchPath -PathType Leaf)) {
+    throw "DSH-UO Harness patch not found: $patchPath"
+  }
 }
 
 $manifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $manifestPath | ConvertFrom-Json
@@ -57,14 +67,18 @@ $outputParent = Split-Path -Parent $preparedRoot
 New-Item -ItemType Directory -Path $outputParent -Force | Out-Null
 Invoke-Git -GitArguments @('-c', "safe.directory=$upstreamRoot", '-C', $upstreamRoot, 'worktree', 'add', '--detach', $preparedRoot, $commit)
 
-$pluginDestination = Join-Path $preparedRoot 'packages\client\ui-dsh-uo-upstream-status'
-Copy-Item -LiteralPath $pluginSource -Destination $pluginDestination -Recurse
-Invoke-Git -GitArguments @(
-  '-c', "safe.directory=$upstreamRoot",
-  '-c', "safe.directory=$preparedRoot",
-  '-C', $preparedRoot,
-  'apply', '--whitespace=nowarn', $patchPath
-)
+foreach ($pluginSource in $pluginSources) {
+  $pluginDestination = Join-Path $preparedRoot "packages\client\$($pluginSource | Split-Path -Leaf)"
+  Copy-Item -LiteralPath $pluginSource -Destination $pluginDestination -Recurse
+}
+foreach ($patchPath in $patchPaths) {
+  Invoke-Git -GitArguments @(
+    '-c', "safe.directory=$upstreamRoot",
+    '-c', "safe.directory=$preparedRoot",
+    '-C', $preparedRoot,
+    'apply', '--whitespace=nowarn', $patchPath
+  )
+}
 Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $preparedRoot 'harness.json')
 
 Write-Host "Prepared Harness source: $preparedRoot"
