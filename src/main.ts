@@ -1,9 +1,12 @@
 import { join, resolve } from 'node:path'
-import { app, BrowserWindow, Menu, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron'
+import type { HarnessUpstreamCheckResult } from './desktop-api.js'
 import { DshServer, type DshExit } from './dsh-process.js'
 import { DesktopLogger, errorText } from './logger.js'
+import { checkHarnessUpstream } from './upstream-status.js'
 
 const PRODUCT_NAME = 'DSH Desktop Unofficial'
+const CHECK_HARNESS_UPSTREAM_CHANNEL = 'dsh-desktop:check-harness-upstream'
 
 let mainWindow: BrowserWindow | null = null
 let dshServer: DshServer | undefined
@@ -39,6 +42,7 @@ if (!app.requestSingleInstanceLock()) {
 
 async function startDesktop(): Promise<void> {
   Menu.setApplicationMenu(null)
+  registerDesktopApi()
   const window = createWindow()
   mainWindow = window
   window.on('closed', () => { mainWindow = null })
@@ -87,6 +91,7 @@ function createWindow(): BrowserWindow {
     backgroundColor: '#f5f6f7',
     title: PRODUCT_NAME,
     webPreferences: {
+      preload: join(app.getAppPath(), 'dist', 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
@@ -125,7 +130,30 @@ function resolveHarnessDir(): string {
   const configured = process.env['DSH_DESKTOP_HARNESS_DIR']?.trim()
   if (configured !== undefined && configured.length > 0) return resolve(configured)
   if (app.isPackaged) return join(process.resourcesPath, 'runtime')
-  return resolve(app.getAppPath(), '..', 'deepseek-harness')
+  return join(app.getAppPath(), '.build', 'deepseek-harness')
+}
+
+function registerDesktopApi(): void {
+  ipcMain.handle(CHECK_HARNESS_UPSTREAM_CHANNEL, async (): Promise<HarnessUpstreamCheckResult> => {
+    logger?.info('upstream', 'Checking official Harness repository')
+    try {
+      const status = await checkHarnessUpstream(resolveHarnessManifestPath())
+      logger?.info(
+        'upstream',
+        `Harness status: ${status.state} (bundled ${status.currentCommit}, official ${status.latestCommit})`,
+      )
+      return { ok: true, status }
+    } catch (error) {
+      const message = errorText(error)
+      logger?.error('upstream', `Harness status check failed: ${message}`)
+      return { ok: false, error: message }
+    }
+  })
+}
+
+function resolveHarnessManifestPath(): string {
+  if (app.isPackaged) return join(process.resourcesPath, 'runtime', 'harness.json')
+  return join(app.getAppPath(), 'upstream', 'harness.json')
 }
 
 function resolveNodeExecutable(): string {

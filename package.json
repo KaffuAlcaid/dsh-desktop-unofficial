@@ -11,6 +11,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "pnpm run build && electron .",
+    "prepare:harness": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-harness.ps1",
     "start": "electron ."
   },
   "devDependencies": {
