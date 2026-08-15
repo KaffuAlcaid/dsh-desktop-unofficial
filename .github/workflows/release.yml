@@ -1,0 +1,246 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 24.19.0
+  PNPM_VERSION: 11.7.0
+
+jobs:
+  metadata:
+    name: Validate release metadata
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      repository: ${{ steps.release.outputs.repository }}
+      commit: ${{ steps.release.outputs.commit }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Validate tag and Harness manifest
+        id: release
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          repository="$(node -p "JSON.parse(require('node:fs').readFileSync('upstream/harness.json', 'utf8')).repository")"
+          commit="$(node -p "JSON.parse(require('node:fs').readFileSync('upstream/harness.json', 'utf8')).commit")"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package version $version" >&2
+            exit 1
+          fi
+          if [[ ! "$commit" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "upstream/harness.json must contain a full Git commit SHA" >&2
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "repository=$repository"
+            echo "commit=$commit"
+          } >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: Package Windows x64
+    needs: metadata
+    runs-on: windows-2025
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            upstream/harness.json
+
+      - name: Install desktop dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Fetch pinned Harness commit
+        id: upstream
+        shell: pwsh
+        env:
+          HARNESS_REPOSITORY: ${{ needs.metadata.outputs.repository }}
+          HARNESS_COMMIT: ${{ needs.metadata.outputs.commit }}
+        run: |
+          $upstreamPath = Join-Path $env:RUNNER_TEMP 'deepseek-harness'
+          git init $upstreamPath
+          if ($LASTEXITCODE -ne 0) { throw 'git init failed' }
+          git -C $upstreamPath remote add origin $env:HARNESS_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw 'git remote add failed' }
+          git -C $upstreamPath fetch --depth=1 origin $env:HARNESS_COMMIT
+          if ($LASTEXITCODE -ne 0) { throw 'git fetch failed' }
+          "path=$upstreamPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Inject DSH UO overrides
+        shell: pwsh
+        env:
+          UPSTREAM_PATH: ${{ steps.upstream.outputs.path }}
+        run: .\scripts\prepare-harness.ps1 -UpstreamPath $env:UPSTREAM_PATH
+
+      - name: Install Harness dependencies
+        working-directory: .build/deepseek-harness
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Windows packages
+        shell: pwsh
+        run: .\scripts\package-portable.ps1 -Target all
+
+      - name: Verify Windows artifacts
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          $expected = @(
+            "release\DSH-UO-$env:VERSION-win-x64.zip",
+            "release\DSH-UO-Setup-$env:VERSION-x64.exe"
+          )
+          foreach ($path in $expected) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Expected release artifact was not created: $path"
+            }
+          }
+
+      - name: Store Windows release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-windows-x64
+          path: |
+            release/DSH-UO-${{ needs.metadata.outputs.version }}-win-x64.zip
+            release/DSH-UO-Setup-${{ needs.metadata.outputs.version }}-x64.exe
+          if-no-files-found: error
+          retention-days: 1
+
+  linux:
+    name: Package Linux x64
+    needs: metadata
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            upstream/harness.json
+
+      - name: Install desktop dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare pinned Harness source
+        shell: bash
+        env:
+          HARNESS_REPOSITORY: ${{ needs.metadata.outputs.repository }}
+          HARNESS_COMMIT: ${{ needs.metadata.outputs.commit }}
+        run: |
+          upstream_path="$RUNNER_TEMP/deepseek-harness"
+          git init "$upstream_path"
+          git -C "$upstream_path" remote add origin "$HARNESS_REPOSITORY"
+          git -C "$upstream_path" fetch --depth=1 origin "$HARNESS_COMMIT"
+          bash scripts/prepare-harness.sh "$upstream_path" "$GITHUB_WORKSPACE/.build/deepseek-harness-linux"
+
+      - name: Install Harness dependencies
+        working-directory: .build/deepseek-harness-linux
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Linux package
+        run: bash scripts/package-portable.sh
+
+      - name: Verify Linux artifact
+        shell: bash
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          archive="release/DSH-UO-$VERSION-linux-x64.zip"
+          test -f "$archive"
+          unzip -t "$archive"
+
+      - name: Store Linux release asset
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-x64
+          path: release/DSH-UO-${{ needs.metadata.outputs.version }}-linux-x64.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - metadata
+      - windows
+      - linux
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Windows release assets
+        uses: actions/download-artifact@v8
+        with:
+          name: release-windows-x64
+          path: dist
+
+      - name: Download Linux release asset
+        uses: actions/download-artifact@v8
+        with:
+          name: release-linux-x64
+          path: dist
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          mapfile -t assets < <(find dist -maxdepth 1 -type f -print | sort)
+          if [ "${#assets[@]}" -ne 3 ]; then
+            echo "Expected three release assets, found ${#assets[@]}" >&2
+            exit 1
+          fi
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --verify-tag \
+              --title "DSH UO v$VERSION" \
+              --notes "Automated build of DSH UO $VERSION."

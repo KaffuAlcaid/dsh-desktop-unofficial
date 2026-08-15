@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 24.19.0
+  PNPM_VERSION: 11.7.0
+
+jobs:
+  validate:
+    name: Validate desktop and Harness overrides
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            upstream/harness.json
+
+      - name: Install desktop dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop
+        run: pnpm run build
+
+      - name: Prepare pinned Harness source
+        shell: bash
+        run: |
+          repository="$(node -p "JSON.parse(require('node:fs').readFileSync('upstream/harness.json', 'utf8')).repository")"
+          commit="$(node -p "JSON.parse(require('node:fs').readFileSync('upstream/harness.json', 'utf8')).commit")"
+          upstream_path="$RUNNER_TEMP/deepseek-harness"
+          git init "$upstream_path"
+          git -C "$upstream_path" remote add origin "$repository"
+          git -C "$upstream_path" fetch --depth=1 origin "$commit"
+          bash scripts/prepare-harness.sh "$upstream_path" "$GITHUB_WORKSPACE/.build/deepseek-harness-linux"
+
+      - name: Install Harness dependencies
+        working-directory: .build/deepseek-harness-linux
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Harness with injected overrides
+        working-directory: .build/deepseek-harness-linux
+        run: pnpm run build

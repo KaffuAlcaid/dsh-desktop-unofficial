@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$HarnessPath,
-  [ValidateSet('zip', 'nsis')]
+  [ValidateSet('zip', 'nsis', 'all')]
   [string]$Target = 'zip'
 )
 
@@ -118,12 +118,15 @@ Copy-Item -LiteralPath (Join-Path $nodeSource 'LICENSE') -Destination (Join-Path
 Write-Host "Building the Electron Windows $Target package..."
 Invoke-Pnpm -WorkingDirectory $projectRoot -Arguments @('run', 'build')
 $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
-Invoke-Node -Arguments @(
+$builderArguments = @(
   $builderCli,
   '--config', $builderConfig,
-  '--win', $Target,
-  '--x64',
-  '--publish', 'never'
+  '--win'
 )
+if ($Target -ne 'all') {
+  $builderArguments += $Target
+}
+$builderArguments += @('--x64', '--publish', 'never')
+Invoke-Node -Arguments $builderArguments
 
 Write-Host "Windows $Target package written to $(Join-Path $projectRoot 'release')"
