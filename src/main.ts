@@ -45,7 +45,9 @@ async function startDesktop(): Promise<void> {
   await showStatus(window, '正在启动 DSH', '正在准备本地 WebUI...')
 
   const userData = app.getPath('userData')
-  const desktopLogger = new DesktopLogger(join(userData, 'logs', 'dsh-desktop.log'))
+  const desktopLogger = new DesktopLogger(
+    join(app.getPath('documents'), 'DSH-UO', 'logs', 'dsh-desktop.log'),
+  )
   logger = desktopLogger
   desktopLogger.info(
     'desktop',
@@ -54,6 +56,7 @@ async function startDesktop(): Promise<void> {
   const server = new DshServer(
     {
       harnessDir: resolveHarnessDir(),
+      nodeExecutable: resolveNodeExecutable(),
       homeDir: join(userData, 'dsh-home'),
       workspaceDir: join(userData, 'workspace'),
     },
@@ -93,10 +96,10 @@ function createWindow(): BrowserWindow {
   window.webContents.on('render-process-gone', (_event, details) => {
     logger?.error('electron', `Renderer process gone: ${JSON.stringify(details)}`)
   })
-  window.webContents.on('console-message', (_event, details) => {
-    const location = details.sourceUrl === '' ? '' : ` (${details.sourceUrl}:${String(details.lineNumber)})`
+  window.webContents.on('console-message', (details) => {
+    const location = details.sourceId === '' ? '' : ` (${details.sourceId}:${String(details.lineNumber)})`
     const message = `${details.message}${location}`
-    if (details.level >= 3) logger?.error('renderer', message)
+    if (details.level === 'error') logger?.error('renderer', message)
     else logger?.info('renderer', message)
   })
 
@@ -123,6 +126,13 @@ function resolveHarnessDir(): string {
   if (configured !== undefined && configured.length > 0) return resolve(configured)
   if (app.isPackaged) return join(process.resourcesPath, 'runtime')
   return resolve(app.getAppPath(), '..', 'deepseek-harness')
+}
+
+function resolveNodeExecutable(): string {
+  const configured = process.env['DSH_DESKTOP_NODE_EXECUTABLE']?.trim()
+  if (configured !== undefined && configured.length > 0) return resolve(configured)
+  if (app.isPackaged) return join(process.resourcesPath, 'runtime', 'node', 'node.exe')
+  return 'node'
 }
 
 function isAllowedUrl(target: string): boolean {

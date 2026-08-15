@@ -12,6 +12,8 @@ const OUTPUT_LIMIT = 65_536
 export interface DshServerOptions {
   /** Root of the built DeepSeek Harness source or packaged runtime. */
   harnessDir: string
+  /** Standard Node.js executable used by Harness and its native workers. */
+  nodeExecutable: string
   /** Desktop-specific Harness home. */
   homeDir: string
   /** Initial workspace used before the user chooses another directory. */
@@ -46,19 +48,18 @@ export class DshServer {
     await mkdir(this.options.homeDir, { recursive: true })
     await mkdir(this.options.workspaceDir, { recursive: true })
 
-    this.logger.info('dsh', `Launching ${entry}`)
+    this.logger.info('dsh', `Launching ${this.options.nodeExecutable} ${entry}`)
     this.logger.info('dsh', `Home: ${this.options.homeDir}`)
     this.logger.info('dsh', `Workspace: ${this.options.workspaceDir}`)
 
     const child = spawn(
-      process.execPath,
-      ['--expose-internals', entry, 'web', '--host', '127.0.0.1', '--port', '0'],
+      this.options.nodeExecutable,
+      [entry, 'web', '--host', '127.0.0.1', '--port', '0'],
       {
         cwd: this.options.workspaceDir,
         env: {
           ...process.env,
           DSH_HOME: this.options.homeDir,
-          ELECTRON_RUN_AS_NODE: '1',
         },
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
