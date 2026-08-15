@@ -14,6 +14,7 @@ export const REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhi
 type ReasoningLevel = typeof REASONING_LEVELS[number]
 type ReasoningEfforts = Partial<Record<ReasoningLevel, string | null>>
 type ReasoningMode = 'preset' | 'custom'
+export type DeveloperRoleMode = 'auto' | 'developer' | 'system'
 type ReasoningPresetId = 'openai' | 'anthropic' | 'xai' | 'kimi' | 'glm' | 'deepseek'
 type ThinkingFormat = 'openai' | 'deepseek' | 'openrouter' | 'together' | 'zai' | 'qwen'
 | 'string-thinking' | 'ant-ling'
@@ -97,6 +98,26 @@ function compatOf(model: Readonly<Record<string, unknown>>): Record<string, unkn
     : {}
 }
 
+/** Return the explicit system-prompt role override, or automatic detection. */
+export function developerRoleModeOf(model: Readonly<Record<string, unknown>>): DeveloperRoleMode {
+  const value = compatOf(model)['supportsDeveloperRole']
+  return value === true ? 'developer' : value === false ? 'system' : 'auto'
+}
+
+/** Replace only the system-prompt role override while preserving other compatibility fields. */
+export function withDeveloperRole(
+  model: Readonly<Record<string, unknown>>,
+  mode: DeveloperRoleMode,
+): Record<string, unknown> {
+  const next = { ...model }
+  const compat = compatOf(model)
+  if (mode === 'auto') Reflect.deleteProperty(compat, 'supportsDeveloperRole')
+  else compat['supportsDeveloperRole'] = mode === 'developer'
+  if (Object.keys(compat).length === 0) Reflect.deleteProperty(next, 'compat')
+  else next['compat'] = compat
+  return next
+}
+
 function thinkingFormatOf(model: Readonly<Record<string, unknown>>, fallback: ThinkingFormat): ThinkingFormat {
   const value = compatOf(model)['thinkingFormat']
   return typeof value === 'string' && THINKING_FORMATS.includes(value as ThinkingFormat)
@@ -125,7 +146,7 @@ export function requestField(protocol: string | undefined, format: ThinkingForma
   }
 }
 
-/** Replace only the reasoning fields while preserving the rest of the model record. */
+/** Replace this section's reasoning fields; restoring defaults also clears its role override. */
 export function withReasoning(
   model: Readonly<Record<string, unknown>>,
   efforts: ReasoningEfforts | false | undefined,
@@ -146,6 +167,7 @@ export function withReasoning(
     Reflect.deleteProperty(compat, 'thinkingFormat')
     Reflect.deleteProperty(compat, 'supportsReasoningEffort')
   }
+  if (efforts === undefined) Reflect.deleteProperty(compat, 'supportsDeveloperRole')
   if (Object.keys(compat).length === 0) Reflect.deleteProperty(next, 'compat')
   else next['compat'] = compat
   return next
@@ -163,9 +185,11 @@ export function ReasoningEffortSection(props: ReasoningEffortSectionProps): Reac
   const selectedPreset = inferredPreset ?? 'openai'
   const selectedDefinition = REASONING_PRESETS[selectedPreset]
   const format = thinkingFormatOf(model, selectedDefinition.format)
+  const developerRole = developerRoleModeOf(model)
   const configured = Object.hasOwn(model, 'reasoningEfforts')
     || Object.hasOwn(compatOf(model), 'thinkingFormat')
     || Object.hasOwn(compatOf(model), 'supportsReasoningEffort')
+    || Object.hasOwn(compatOf(model), 'supportsDeveloperRole')
   const activeEfforts: ReasoningEfforts = efforts !== undefined && efforts !== false ? efforts : {}
   const activeLevels = REASONING_LEVELS.filter(level => Object.hasOwn(activeEfforts, level))
   const remainingLevels = REASONING_LEVELS.filter(level => !Object.hasOwn(activeEfforts, level))
@@ -306,6 +330,29 @@ export function ReasoningEffortSection(props: ReasoningEffortSectionProps): Reac
                           readOnly
                         />
                       </label>
+                      {protocol === 'openai-completions' || protocol === 'openai-responses'
+                        ? (
+                          <label className={css.modelField}>
+                            <span className={css.modelFieldLabel}>{t('systemPromptRole')}</span>
+                            <select
+                              className={`${css.input} ${css.selectInput}`}
+                              value={developerRole}
+                              aria-label={`${t('systemPromptRole')} ${props.position}`}
+                              disabled={disabled}
+                              onChange={(event) => {
+                                props.onChange(withDeveloperRole(
+                                  model,
+                                  event.target.value as DeveloperRoleMode,
+                                ))
+                              }}
+                            >
+                              <option value="auto">{t('roleAuto')}</option>
+                              <option value="developer">Developer</option>
+                              <option value="system">System</option>
+                            </select>
+                          </label>
+                        )
+                        : null}
                     </div>
 
                     <section className={css.reasoningMapping}>

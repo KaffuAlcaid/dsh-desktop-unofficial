@@ -23,7 +23,8 @@ $pluginSources = @(
 $patchPaths = @(
   (Join-Path $projectRoot 'harness-overrides\patches\0001-dsh-uo-upstream-status.patch'),
   (Join-Path $projectRoot 'harness-overrides\patches\0002-dsh-uo-reasoning-effort.patch'),
-  (Join-Path $projectRoot 'harness-overrides\patches\0003-dsh-uo-model-input.patch')
+  (Join-Path $projectRoot 'harness-overrides\patches\0003-dsh-uo-model-input.patch'),
+  (Join-Path $projectRoot 'harness-overrides\patches\0004-pi-ai-developer-role.patch')
 )
 
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {

@@ -6,5 +6,6 @@ release/
 resources/runtime/
 *.log
 /TODO.md
+/HARNESS_COMMUNITY.md
 /HARNESS_OVERRIDES.md
 .codex/

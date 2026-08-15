@@ -3,7 +3,8 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import '../src/client/index.ts'
 import {
-  ReasoningEffortSection, REASONING_PRESETS, requestField, withReasoning,
+  developerRoleModeOf, ReasoningEffortSection, REASONING_PRESETS, requestField,
+  withDeveloperRole, withReasoning,
 } from '../src/client/ReasoningEffortSection.tsx'
 import type { ReasoningEffortSectionProps } from '../src/client/ReasoningEffortSection.tsx'
 import { en } from '../src/client/locales.ts'
@@ -18,12 +19,16 @@ const t: ReasoningEffortSectionProps['t'] = (key, params) => {
 }
 const neverHook = (() => { throw new Error('component must not read global hooks') }) as never
 
-function mount(model: Readonly<Record<string, unknown>>, onChange = vi.fn()) {
+function mount(
+  model: Readonly<Record<string, unknown>>,
+  onChange = vi.fn(),
+  protocol = 'openai-completions',
+) {
   render(
     <ReasoningEffortSection
       model={model}
       position={1}
-      protocol="openai-completions"
+      protocol={protocol}
       customProvider
       open
       disabled={false}
@@ -77,10 +82,30 @@ describe('ReasoningEffortSection', () => {
     expect(withReasoning({
       id: 'm',
       reasoningEfforts: { high: 'high' },
-      compat: { thinkingFormat: 'zai', supportsReasoningEffort: true, futureFlag: 1 },
+      compat: {
+        thinkingFormat: 'zai', supportsReasoningEffort: true, supportsDeveloperRole: false, futureFlag: 1,
+      },
     }, undefined, 'openai-completions')).toEqual({
       id: 'm',
       compat: { futureFlag: 1 },
     })
+  })
+
+  it('writes an explicit system role for OpenAI Responses and restores automatic detection', () => {
+    const model = {
+      id: 'm',
+      reasoningEfforts: REASONING_PRESETS.openai.efforts,
+      compat: { futureFlag: 1 },
+    }
+    const onChange = mount(model, vi.fn(), 'openai-responses')
+
+    fireEvent.change(screen.getByLabelText(`${en.systemPromptRole} 1`), { target: { value: 'system' } })
+    expect(onChange).toHaveBeenCalledWith({
+      ...model,
+      compat: { futureFlag: 1, supportsDeveloperRole: false },
+    })
+    expect(developerRoleModeOf({ compat: { supportsDeveloperRole: true } })).toBe('developer')
+    expect(withDeveloperRole({ compat: { supportsDeveloperRole: false, futureFlag: 1 } }, 'auto'))
+      .toEqual({ compat: { futureFlag: 1 } })
   })
 })

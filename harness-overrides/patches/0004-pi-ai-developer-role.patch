@@ -1,0 +1,349 @@
+diff --git a/packages/llm/llm-pi-ai/src/catalog.ts b/packages/llm/llm-pi-ai/src/catalog.ts
+index 7a4ff7e8a2..0957539593 100644
+--- a/packages/llm/llm-pi-ai/src/catalog.ts
++++ b/packages/llm/llm-pi-ai/src/catalog.ts
+@@ -20,6 +20,7 @@ import type {
+   ModelCost,
+   ModelThinkingLevel,
+   OpenAICompletionsCompat,
++  OpenAIResponsesCompat,
+   Provider,
+   ThinkingLevelMap,
+ } from '@earendil-works/pi-ai'
+@@ -183,19 +184,19 @@ export function catalogModels(provider: string): Map<string, Model<Api>> {
+ export type PiAiReasoningEfforts = Partial<Record<ModelThinkingLevel, string | null>>
+ 
+ /**
+- * Reasoning-dispatch compatibility switches, set on the route (its models'
+- * default) or per model (winning over the route). Only the switches pi-ai's
+- * reasoning dispatch reads are offered; the rest of pi-ai's compat surface
+- * keeps its baseURL-derived auto-detection. pi-ai types both fields only on
+- * `OpenAICompletionsCompat` — the other wire protocols define their reasoning
+- * fields in the protocol itself — so resolution rejects a model-level switch
+- * anywhere else, while a route-level default skips past models it cannot fit.
++ * Reasoning and system-prompt-role compatibility switches, set on the route
++ * (its models' default) or per model (winning over the route). The reasoning
++ * dispatch fields apply only to `openai-completions`; `supportsDeveloperRole`
++ * applies to both `openai-completions` and `openai-responses`. The rest of
++ * pi-ai's compat surface keeps its protocol defaults and URL-based detection.
+  */
+ export interface PiAiCompatProfile {
+   /** Reasoning parameter format the endpoint expects; absent keeps the catalog entry's, then pi-ai's baseURL-derived guess. */
+   thinkingFormat?: PiAiThinkingFormat
+   /** Whether the endpoint accepts `reasoning_effort`; absent keeps the catalog entry's, then pi-ai's baseURL-derived guess. */
+   supportsReasoningEffort?: boolean
++  /** Whether the endpoint accepts the `developer` system-prompt role; absent keeps pi-ai's protocol default. */
++  supportsDeveloperRole?: boolean
+ }
+ 
+ /** One configured model entry: an id plus the catalog fields it overrides. */
+@@ -258,7 +259,7 @@ export interface RouteCatalogRequest {
+   models?: readonly PiAiModelProfile[]
+   /** Installed-catalog customizations by model id; only meaningful while `models` is absent. */
+   modelOverrides?: Readonly<Record<string, PiAiModelOverride>>
+-  /** Reasoning-dispatch switches for every `openai-completions` model on the route; entries override per field. */
++  /** Compatible reasoning and system-prompt-role switches for the route's OpenAI models; entries override per field. */
+   compat?: PiAiCompatProfile
+   /** Context capacity for a model neither the entry nor the catalog sizes. */
+   defaultContextWindow: number
+@@ -369,15 +370,14 @@ function resolveModelReasoning(
+ }
+ 
+ /**
+- * Resolve one model's compat block from the profile's reasoning switches.
++ * Resolve one model's compat block from the profile's reasoning and role switches.
+  *
+  * A model switch wins over the route switch; whatever neither sets keeps the
+  * installed entry's value, and a field no layer decides falls through to
+- * pi-ai's baseURL-derived detection. Only an `openai-completions` model takes
+- * the switches at all: a model-level switch on any other protocol fails
+- * resolution, while a route-level default skips past such models — the same
+- * posture as the route-level `reasoning` default, which also must not fail
+- * models it does not fit.
++ * pi-ai's baseURL-derived detection. Reasoning switches apply only to
++ * `openai-completions`; the developer-role switch also applies to
++ * `openai-responses`. A model-level switch on an incompatible protocol fails,
++ * while a route-level default skips models it cannot fit.
+  * @param provider - provider route key, for diagnostics.
+  * @param entry - the configured model entry.
+  * @param route - the route-level switches, when any.
+@@ -391,15 +391,28 @@ function resolveModelCompat(
+   route: PiAiCompatProfile | undefined,
+   base: Model<Api> | undefined,
+   api: string,
+-): { compat: OpenAICompletionsCompat } | Record<string, never> {
++): { compat: OpenAICompletionsCompat | OpenAIResponsesCompat } | Record<string, never> {
+   const thinkingFormat = entry.compat?.thinkingFormat ?? route?.thinkingFormat
+   const supportsReasoningEffort = entry.compat?.supportsReasoningEffort ?? route?.supportsReasoningEffort
+-  if (thinkingFormat === undefined && supportsReasoningEffort === undefined) return {}
++  const supportsDeveloperRole = entry.compat?.supportsDeveloperRole ?? route?.supportsDeveloperRole
++  if (thinkingFormat === undefined && supportsReasoningEffort === undefined && supportsDeveloperRole === undefined) {
++    return {}
++  }
+   if (api !== 'openai-completions') {
+     if (entry.compat?.thinkingFormat !== undefined || entry.compat?.supportsReasoningEffort !== undefined) {
+       invalid(provider, `model "${entry.id}" sets compat reasoning switches, but its api is "${api}";`
+         + ' thinkingFormat and supportsReasoningEffort exist only on openai-completions')
+     }
++  }
++  const supportsRoleOverride = api === 'openai-completions' || api === 'openai-responses'
++  if (!supportsRoleOverride && entry.compat?.supportsDeveloperRole !== undefined) {
++    invalid(provider, `model "${entry.id}" sets compat.supportsDeveloperRole, but its api is "${api}";`
++      + ' the switch exists only on openai-completions and openai-responses')
++  }
++  const hasReasoningOverride = api === 'openai-completions'
++    && (thinkingFormat !== undefined || supportsReasoningEffort !== undefined)
++  const hasRoleOverride = supportsRoleOverride && supportsDeveloperRole !== undefined
++  if (!hasReasoningOverride && !hasRoleOverride) {
+     return {}
+   }
+   // The installed entry's compat matches the entry's OWN api — a route-level
+@@ -408,12 +421,15 @@ function resolveModelCompat(
+   // inherited only while the resolved api still is the entry's. A repointed
+   // model starts from pi-ai's baseURL-derived detection instead, which is
+   // what a protocol change means for every other compat field too.
+-  const inherited: OpenAICompletionsCompat | undefined = base?.api === api ? base.compat : undefined
++  const inherited = base?.api === api
++    ? base.compat as OpenAICompletionsCompat | OpenAIResponsesCompat | undefined
++    : undefined
+   return {
+     compat: {
+       ...inherited,
+-      ...thinkingFormat === undefined ? {} : { thinkingFormat },
+-      ...supportsReasoningEffort === undefined ? {} : { supportsReasoningEffort },
++      ...api !== 'openai-completions' || thinkingFormat === undefined ? {} : { thinkingFormat },
++      ...api !== 'openai-completions' || supportsReasoningEffort === undefined ? {} : { supportsReasoningEffort },
++      ...supportsDeveloperRole === undefined ? {} : { supportsDeveloperRole },
+     },
+   }
+ }
+@@ -485,8 +501,9 @@ export function resolveRouteModels(request: RouteCatalogRequest): RouteCatalog {
+       + ' must be listed in configuration')
+   }
+   const routeApi = sharedCatalogApi(defaults)
+-  const routeCompatDefined = request.compat?.thinkingFormat !== undefined
++  const routeReasoningCompatDefined = request.compat?.thinkingFormat !== undefined
+     || request.compat?.supportsReasoningEffort !== undefined
++  const routeDeveloperRoleDefined = request.compat?.supportsDeveloperRole !== undefined
+   const seen = new Set<string>()
+   const configuredMaxTokens = new Map<string, number>()
+   const models = entries.map((entry) => {
+@@ -538,9 +555,14 @@ export function resolveRouteModels(request: RouteCatalogRequest): RouteCatalog {
+       ...resolveModelCompat(provider, entry, request.compat, base, api),
+     }
+   })
+-  if (routeCompatDefined && !models.some(model => model.api === 'openai-completions')) {
++  if (routeReasoningCompatDefined && !models.some(model => model.api === 'openai-completions')) {
+     invalid(provider, 'sets compat reasoning switches, but no model on the route speaks openai-completions;'
+       + ' thinkingFormat and supportsReasoningEffort exist only on that protocol')
+   }
++  if (routeDeveloperRoleDefined
++    && !models.some(model => model.api === 'openai-completions' || model.api === 'openai-responses')) {
++    invalid(provider, 'sets compat.supportsDeveloperRole, but no model on the route speaks openai-completions'
++      + ' or openai-responses')
++  }
+   return { models, configuredMaxTokens }
+ }
+diff --git a/packages/llm/llm-pi-ai/src/config.ts b/packages/llm/llm-pi-ai/src/config.ts
+index 4e8e032df0..ed70883483 100644
+--- a/packages/llm/llm-pi-ai/src/config.ts
++++ b/packages/llm/llm-pi-ai/src/config.ts
+@@ -91,9 +91,9 @@ export interface PiAiProviderProfile {
+    */
+   modelOverrides?: Record<string, PiAiModelOverride>
+   /**
+-   * Reasoning-dispatch switches for every `openai-completions` model on this
+-   * route; each model's own `compat` overrides per field. What neither sets
+-   * keeps the installed catalog entry's value, then pi-ai's baseURL-derived
++   * Reasoning and system-prompt-role switches for compatible OpenAI models on
++   * this route; each model's own `compat` overrides per field. What neither
++   * sets keeps the installed catalog entry's value, then pi-ai's baseURL-derived
+    * detection.
+    */
+   compat?: PiAiCompatProfile
+@@ -188,6 +188,7 @@ const thinkingBudgets = z.object({
+ const compatProfile: z<PiAiCompatProfile> = z.object({
+   thinkingFormat: z.union(SUPPORTED_THINKING_FORMATS),
+   supportsReasoningEffort: z.boolean(),
++  supportsDeveloperRole: z.boolean(),
+ })
+ 
+ /**
+diff --git a/packages/llm/llm-pi-ai/tests/adapter.spec.ts b/packages/llm/llm-pi-ai/tests/adapter.spec.ts
+index 51ce347e9a..25844a14b6 100644
+--- a/packages/llm/llm-pi-ai/tests/adapter.spec.ts
++++ b/packages/llm/llm-pi-ai/tests/adapter.spec.ts
+@@ -596,6 +596,76 @@ describe('provider profile lifecycle', () => {
+     expect(server.requests[1]).not.toHaveProperty('reasoning_effort')
+   })
+ 
++  it('forces the system role when a reasoning endpoint rejects developer messages', async () => {
++    const server = await mockServer([{ events: textEvents }])
++    const ctx = new Context()
++    await ctx.plugin(LlmRuntime)
++    await ctx.plugin(LlmPiAi, {
++      providers: {
++        'acme-gateway': {
++          apiKeyEnv: 'PI_TEST_KEY',
++          api: 'openai-completions',
++          baseURL: `${server.url}/v1`,
++          compat: { supportsDeveloperRole: false },
++          models: [{
++            id: 'acme-think',
++            contextWindow: 65_536,
++            maxTokens: 4096,
++            reasoningEfforts: { off: null, high: 'high' },
++          }],
++        },
++      },
++    })
++
++    await assemble(ctx, {
++      provider: 'acme-gateway',
++      model: 'acme-think',
++      reasoningEffort: ReasoningEffortId('high'),
++      system: 'Use tools carefully.',
++      messages: [],
++    })
++    expect(server.requests[0]).toMatchObject({
++      messages: [{ role: 'system', content: 'Use tools carefully.' }],
++    })
++  })
++
++  it('forces the system role through OpenAI Responses', async () => {
++    const server = await mockServer([{
++      status: 401,
++      body: JSON.stringify({ error: { message: 'expected mock failure' } }),
++    }])
++    const ctx = new Context()
++    await ctx.plugin(LlmRuntime)
++    await ctx.plugin(LlmPiAi, {
++      providers: {
++        'acme-gateway': {
++          apiKeyEnv: 'PI_TEST_KEY',
++          api: 'openai-responses',
++          baseURL: `${server.url}/v1`,
++          models: [{
++            id: 'acme-think',
++            contextWindow: 65_536,
++            maxTokens: 4096,
++            reasoningEfforts: { high: 'high' },
++            compat: { supportsDeveloperRole: false },
++          }],
++        },
++      },
++    })
++
++    await assemble(ctx, {
++      provider: 'acme-gateway',
++      model: 'acme-think',
++      reasoningEffort: ReasoningEffortId('high'),
++      system: 'Use tools carefully.',
++      messages: [],
++    })
++    expect(server.paths).toEqual(['/v1/responses'])
++    expect(server.requests[0]).toMatchObject({
++      input: [{ role: 'system', content: 'Use tools carefully.' }],
++    })
++  })
++
+   it('sends a declared off value as the effort parameter instead of omitting it', async () => {
+     vi.stubEnv('PI_TEST_KEY', 'test-key')
+     const server = await mockServer([{ events: textEvents }])
+diff --git a/packages/llm/llm-pi-ai/tests/catalog.spec.ts b/packages/llm/llm-pi-ai/tests/catalog.spec.ts
+index eb4ba511d4..4f7043b823 100644
+--- a/packages/llm/llm-pi-ai/tests/catalog.spec.ts
++++ b/packages/llm/llm-pi-ai/tests/catalog.spec.ts
+@@ -767,16 +767,20 @@ describe('reasoning-dispatch compat switches', () => {
+       'acme-gateway': {
+         api: 'openai-completions',
+         baseURL: 'https://acme.test',
+-        compat: { thinkingFormat: 'deepseek' },
++        compat: { thinkingFormat: 'deepseek', supportsDeveloperRole: false },
+         models: [
+           { id: 'dialect-default', reasoningEfforts: { off: null, high: 'high' } },
+-          { id: 'dialect-odd', compat: { thinkingFormat: 'openai', supportsReasoningEffort: false } },
++          { id: 'dialect-odd', compat: {
++            thinkingFormat: 'openai', supportsReasoningEffort: false, supportsDeveloperRole: true,
++          } },
+         ],
+       },
+     }, 'acme-gateway')
+ 
+-    expect(models.get('dialect-default')?.compat).toEqual({ thinkingFormat: 'deepseek' })
+-    expect(models.get('dialect-odd')?.compat).toEqual({ thinkingFormat: 'openai', supportsReasoningEffort: false })
++    expect(models.get('dialect-default')?.compat)
++      .toEqual({ thinkingFormat: 'deepseek', supportsDeveloperRole: false })
++    expect(models.get('dialect-odd')?.compat)
++      .toEqual({ thinkingFormat: 'openai', supportsReasoningEffort: false, supportsDeveloperRole: true })
+   })
+ 
+   it('merges the switches over the catalog entry’s own compat instead of replacing it', () => {
+@@ -804,13 +808,26 @@ describe('reasoning-dispatch compat switches', () => {
+ 
+     const models = modelsOf({
+       xai: {
+-        compat: { supportsReasoningEffort: false },
++        compat: { supportsReasoningEffort: false, supportsDeveloperRole: false },
+         models: [{ id: completions.id }, { id: responses.id }],
+       },
+     }, 'xai')
+ 
+     expect((models.get(completions.id)?.compat as OpenAICompletionsCompat).supportsReasoningEffort).toBe(false)
+-    expect(models.get(responses.id)?.compat).toEqual(responses.compat)
++    expect((models.get(completions.id)?.compat as OpenAICompletionsCompat).supportsDeveloperRole).toBe(false)
++    expect((models.get(responses.id)?.compat as { supportsDeveloperRole?: boolean }).supportsDeveloperRole).toBe(false)
++  })
++
++  it('accepts a model-level developer-role switch on openai-responses', () => {
++    const models = modelsOf({
++      'acme-gateway': {
++        api: 'openai-responses',
++        baseURL: 'https://acme.test',
++        models: [{ id: 'reasoner', compat: { supportsDeveloperRole: false } }],
++      },
++    }, 'acme-gateway')
++
++    expect((models.get('reasoner')?.compat as { supportsDeveloperRole?: boolean }).supportsDeveloperRole).toBe(false)
+   })
+ 
+   it('rejects a model-level switch on a protocol that has no such field', () => {
+@@ -819,12 +836,20 @@ describe('reasoning-dispatch compat switches', () => {
+         models: [{ id: 'claude-sonnet-4-5', compat: { thinkingFormat: 'openai' } }],
+       },
+     })).toThrow(/exist only on openai-completions/)
++    expect(() => resolveProfiles({
++      anthropic: {
++        models: [{ id: 'claude-sonnet-4-5', compat: { supportsDeveloperRole: false } }],
++      },
++    })).toThrow(/exists only on openai-completions and openai-responses/)
+   })
+ 
+   it('rejects route switches no model on the route can take', () => {
+     expect(() => resolveProfiles({
+       anthropic: { compat: { thinkingFormat: 'openai' } },
+     })).toThrow(/no model on the route speaks openai-completions/)
++    expect(() => resolveProfiles({
++      anthropic: { compat: { supportsDeveloperRole: false } },
++    })).toThrow(/no model on the route speaks openai-completions or openai-responses/)
+   })
+ })
+ 
+diff --git a/packages/llm/llm-pi-ai/tests/config.spec.ts b/packages/llm/llm-pi-ai/tests/config.spec.ts
+index 55444228de..6a0ec73a62 100644
+--- a/packages/llm/llm-pi-ai/tests/config.spec.ts
++++ b/packages/llm/llm-pi-ai/tests/config.spec.ts
+@@ -35,6 +35,13 @@ describe('reasoning schema boundary', () => {
+   it('rejects a thinking format outside the offered set', () => {
+     expect(configWith({ compat: { thinkingFormat: 'quantum' } })).toThrow(/expected/)
+   })
++
++  it('accepts an explicit system-prompt role override', () => {
++    type Materialized = { providers: Record<string, { models?: { compat?: unknown }[] }> }
++    const config = configWith({ compat: { supportsDeveloperRole: false } })() as Materialized
++    expect(config.providers['acme-gateway']?.models?.[0]?.compat)
++      .toEqual({ supportsDeveloperRole: false })
++  })
+ })
+ 
+ describe('modality schema boundary', () => {
