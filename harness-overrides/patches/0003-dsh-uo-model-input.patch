@@ -1,0 +1,337 @@
+diff --git a/packages/bundle/web-app/cordis.patch.yml b/packages/bundle/web-app/cordis.patch.yml
+index 3573aa535f..a33bbcce2a 100644
+--- a/packages/bundle/web-app/cordis.patch.yml
++++ b/packages/bundle/web-app/cordis.patch.yml
+@@ -195,6 +195,9 @@
+     - id: ui-settings-models
+       name: '@deepseek-ai/dsh-client-ui-settings-models'
+ 
++    - id: dsh-uo-model-input
++      name: '@dsh-uo/client-ui-model-input'
++
+     - id: dsh-uo-reasoning-effort
+       name: '@dsh-uo/client-ui-reasoning-effort'
+ 
+diff --git a/packages/bundle/web-app/package.json b/packages/bundle/web-app/package.json
+index 749468e053..18dfa9931e 100644
+--- a/packages/bundle/web-app/package.json
++++ b/packages/bundle/web-app/package.json
+@@ -44,6 +44,7 @@
+     }
+   },
+   "dependencies": {
++    "@dsh-uo/client-ui-model-input": "workspace:^",
+     "@dsh-uo/client-ui-reasoning-effort": "workspace:^",
+     "@dsh-uo/client-ui-upstream-status": "workspace:^",
+     "@deepseek-ai/dsh-agent-presets": "workspace:^",
+diff --git a/packages/client/ui-settings-models/src/client/CustomProviderCard.tsx b/packages/client/ui-settings-models/src/client/CustomProviderCard.tsx
+index 0d2fb504c6..0ef6af7452 100644
+--- a/packages/client/ui-settings-models/src/client/CustomProviderCard.tsx
++++ b/packages/client/ui-settings-models/src/client/CustomProviderCard.tsx
+@@ -62,7 +62,9 @@ export interface CustomProviderCardProps {
+   /** Section copy. */
+   t: (key: keyof typeof en) => string
+   /** Model-row child-slot renderer delegated by the Models section. */
+-  renderSlot?: PropsRenderSlots<'settings.models.model.reasoning'>['renderSlot']
++  renderSlot?: PropsRenderSlots<
++    'settings.models.model.input' | 'settings.models.model.reasoning'
++  >['renderSlot']
+   /** Disable writes (read-only settings provider). */
+   readOnly: boolean
+   /** Close the card; `changed` reports whether a provider was created. */
+diff --git a/packages/client/ui-settings-models/src/client/ModelListEditor.tsx b/packages/client/ui-settings-models/src/client/ModelListEditor.tsx
+index 93230e3451..b529c684ef 100644
+--- a/packages/client/ui-settings-models/src/client/ModelListEditor.tsx
++++ b/packages/client/ui-settings-models/src/client/ModelListEditor.tsx
+@@ -118,6 +118,22 @@ export interface ModelReasoningOwnerProps {
+   onChange: (model: Record<string, unknown>) => void
+ }
+ 
++/** Owner props supplied to the optional per-model input-capability slot. */
++export interface ModelInputOwnerProps {
++  /** Complete model draft; slot occupants must preserve fields they do not own. */
++  model: Readonly<Record<string, unknown>>
++  /** One-based row number used by accessible labels. */
++  position: number
++  /** Whether the input-capability fold is open. */
++  open: boolean
++  /** Disable every mutation. */
++  disabled: boolean
++  /** Toggle the input-capability fold. */
++  onToggle: () => void
++  /** Replace the complete model draft. */
++  onChange: (model: Record<string, unknown>) => void
++}
++
+ /** Props of {@link ModelListEditor}. */
+ export interface ModelListEditorProps {
+   /** The rows as currently drafted. */
+@@ -127,7 +143,9 @@ export interface ModelListEditorProps {
+   /** Whether these rows belong to a hand-declared custom provider. */
+   customProvider?: boolean
+   /** Narrow renderer delegated from the Models section slot owner. */
+-  renderSlot?: PropsRenderSlots<'settings.models.model.reasoning'>['renderSlot']
++  renderSlot?: PropsRenderSlots<
++    'settings.models.model.input' | 'settings.models.model.reasoning'
++  >['renderSlot']
+   /** Replace the drafted rows. */
+   onChange: (models: ModelDraft[]) => void
+   /** Remove the user-owned array and return to inheritance; absent on a create. */
+@@ -225,7 +243,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+   const [candidates, setCandidates] = useState<readonly DiscoveredModelView[] | undefined>(undefined)
+   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
+   // One row can stay open while another is inspected; Basic and the optional
+-  // reasoning plugin fold independently inside it.
++  // input/reasoning plugin folds independently inside it.
+   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
+   const [openSections, setOpenSections] = useState<ReadonlySet<string>>(new Set())
+   // Capacities are edited as text, so a field's keystrokes are held here rather
+@@ -275,7 +293,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+     }
+   }
+ 
+-  const toggleSection = (index: number, section: 'basic' | 'reasoning'): void => {
++  const toggleSection = (index: number, section: 'basic' | 'input' | 'reasoning'): void => {
+     const key = `${String(index)}:${section}`
+     setOpenSections((current) => {
+       const next = new Set(current)
+@@ -523,6 +541,16 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+                     )
+                     : null}
+                 </section>
++                {props.renderSlot?.('settings.models.model.input', {
++                  model,
++                  position: index + 1,
++                  open: openSections.has(`${String(index)}:input`),
++                  disabled,
++                  onToggle: () => { toggleSection(index, 'input') },
++                  onChange: (next) => {
++                    onChange(models.map((entry, at) => at === index ? next : entry))
++                  },
++                })}
+                 {props.renderSlot?.('settings.models.model.reasoning', {
+                   model,
+                   position: index + 1,
+diff --git a/packages/client/ui-settings-models/src/client/ModelsSection.tsx b/packages/client/ui-settings-models/src/client/ModelsSection.tsx
+index 9520219991..736f653569 100644
+--- a/packages/client/ui-settings-models/src/client/ModelsSection.tsx
++++ b/packages/client/ui-settings-models/src/client/ModelsSection.tsx
+@@ -43,7 +43,7 @@ export interface ModelsSectionInjected {
+  */
+ export type ModelsSectionProps =
+   & Partial<ModelsSectionInjected>
+-  & Partial<PropsRenderSlots<'settings.models.model.reasoning'>>
++  & Partial<PropsRenderSlots<'settings.models.model.input' | 'settings.models.model.reasoning'>>
+ 
+ /** Provider identity shared by row actions and confirmation copy. */
+ export interface ProviderIdentity {
+@@ -184,7 +184,9 @@ export function ModelsSection(props: ModelsSectionProps): ReactNode {
+ 
+ function Loaded({ injected, renderSlot }: {
+   injected: ModelsSectionInjected
+-  renderSlot?: PropsRenderSlots<'settings.models.model.reasoning'>['renderSlot']
++  renderSlot?: PropsRenderSlots<
++    'settings.models.model.input' | 'settings.models.model.reasoning'
++  >['renderSlot']
+ }): ReactNode {
+   const { controller, api, t } = injected
+   const state = injected.useSnapshot(snapshot => snapshot)
+diff --git a/packages/client/ui-settings-models/src/client/ProviderEditor.tsx b/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
+index 22e9115ae3..e7cfc078d0 100644
+--- a/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
++++ b/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
+@@ -68,7 +68,9 @@ export interface ProviderEditorProps {
+   /** Section copy. */
+   t: (key: keyof typeof en) => string
+   /** Model-row child-slot renderer delegated by the Models section. */
+-  renderSlot?: PropsRenderSlots<'settings.models.model.reasoning'>['renderSlot']
++  renderSlot?: PropsRenderSlots<
++    'settings.models.model.input' | 'settings.models.model.reasoning'
++  >['renderSlot']
+   /** Disable writes (read-only settings provider). */
+   readOnly: boolean
+   /** Render only the credential field and actions, without provider settings. */
+diff --git a/packages/client/ui-settings-models/src/client/index.ts b/packages/client/ui-settings-models/src/client/index.ts
+index b1fe623eda..af21919dd0 100644
+--- a/packages/client/ui-settings-models/src/client/index.ts
++++ b/packages/client/ui-settings-models/src/client/index.ts
+@@ -18,7 +18,7 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
+ import type {} from '@deepseek-ai/dsh-api-remotes/client'
+ import { ModelsSection } from './ModelsSection.tsx'
+ import type { ModelsSectionInjected } from './ModelsSection.tsx'
+-import type { ModelReasoningOwnerProps } from './ModelListEditor.tsx'
++import type { ModelInputOwnerProps, ModelReasoningOwnerProps } from './ModelListEditor.tsx'
+ import { DeepSeekOnboardingDialog } from './DeepSeekOnboardingDialog.tsx'
+ import type { DeepSeekOnboardingInjected } from './DeepSeekOnboardingDialog.tsx'
+ import { WelcomeNotice } from './WelcomeNotice.tsx'
+@@ -33,6 +33,12 @@ export type { ModelsKey } from './locales.ts'
+ 
+ declare module '@deepseek-ai/dsh-client-ui-slots' {
+   interface SlotMap {
++    /** Optional per-model request-modality editor inside the Models page. */
++    'settings.models.model.input': {
++      kind: 'single'
++      scope: 'root'
++      owner: ModelInputOwnerProps
++    }
+     /** Optional per-model reasoning capability editor inside the Models page. */
+     'settings.models.model.reasoning': {
+       kind: 'single'
+@@ -131,6 +137,7 @@ export function apply(ctx: ClientContext): void {
+     label: () => t('nav'),
+     inject: injected,
+     children: {
++      'settings.models.model.input': { kind: 'single', scope: 'root' },
+       'settings.models.model.reasoning': { kind: 'single', scope: 'root' },
+     },
+   }, ModelsSection))
+diff --git a/packages/client/ui-settings-models/tests/provider-form.client.spec.tsx b/packages/client/ui-settings-models/tests/provider-form.client.spec.tsx
+index 0bed6a70f3..0c97573e9c 100644
+--- a/packages/client/ui-settings-models/tests/provider-form.client.spec.tsx
++++ b/packages/client/ui-settings-models/tests/provider-form.client.spec.tsx
+@@ -10,7 +10,7 @@ import type { ModelsSectionInjected, ModelsSectionProps } from '../src/client/Mo
+ import { CustomProviderCard } from '../src/client/CustomProviderCard.tsx'
+ import { formatCapacity, parseCapacity } from '../src/client/DeepSeekModelsEditor.tsx'
+ import { validateModelReasoning } from '../src/client/ModelListEditor.tsx'
+-import type { ModelReasoningOwnerProps } from '../src/client/ModelListEditor.tsx'
++import type { ModelInputOwnerProps, ModelReasoningOwnerProps } from '../src/client/ModelListEditor.tsx'
+ import { ModelsSettingsStore, deriveKeyRef, protocolChoices } from '../src/client/store.ts'
+ import { en } from '../src/client/locales.ts'
+ 
+@@ -33,6 +33,7 @@ const PiAiConfig = Schema.object({
+       name: Schema.string(),
+       contextWindow: Schema.number(),
+       maxTokens: Schema.number(),
++      input: Schema.array(Schema.union(['text', 'image'])),
+       reasoningEfforts: Schema.union([
+         Schema.const(false),
+         Schema.dict(
+@@ -249,12 +250,15 @@ describe('model list editing', () => {
+     })
+   })
+ 
+-  it('delegates custom-provider rows to the reasoning slot with independent open state', async () => {
+-    const renderSlot = vi.fn((_key: string, owner: ModelReasoningOwnerProps) => (
+-      <button type="button" aria-label={`reasoning slot ${String(owner.position)}`} onClick={owner.onToggle}>
+-        {owner.open ? 'open' : 'closed'}
+-      </button>
+-    )) as never
++  it('delegates custom-provider rows to independent input and reasoning slots', async () => {
++    const renderSlot = vi.fn((key: string, owner: ModelInputOwnerProps | ModelReasoningOwnerProps) => {
++      const label = key === 'settings.models.model.input' ? 'input' : 'reasoning'
++      return (
++        <button type="button" aria-label={`${label} slot ${String(owner.position)}`} onClick={owner.onToggle}>
++          {owner.open ? 'open' : 'closed'}
++        </button>
++      )
++    }) as never
+     await mountSection({
+       providers: {
+         'acme-gateway': {
+@@ -270,11 +274,20 @@ describe('model list editing', () => {
+ 
+     expandModel(1)
+     expandModel(2)
++    expect(screen.getByLabelText('input slot 1').textContent).toBe('closed')
++    expect(screen.getByLabelText('input slot 2').textContent).toBe('closed')
+     expect(screen.getByLabelText('reasoning slot 1').textContent).toBe('open')
+     expect(screen.getByLabelText('reasoning slot 2').textContent).toBe('open')
++    fireEvent.click(screen.getByLabelText('input slot 1'))
++    expect(screen.getByLabelText('input slot 1').textContent).toBe('open')
++    expect(screen.getByLabelText('input slot 2').textContent).toBe('closed')
+     fireEvent.click(screen.getByLabelText('reasoning slot 1'))
+     expect(screen.getByLabelText('reasoning slot 1').textContent).toBe('closed')
+     expect(screen.getByLabelText('reasoning slot 2').textContent).toBe('open')
++    expect(renderSlot).toHaveBeenCalledWith(
++      'settings.models.model.input',
++      expect.objectContaining({ position: 1 }),
++    )
+     expect(renderSlot).toHaveBeenCalledWith(
+       'settings.models.model.reasoning',
+       expect.objectContaining({ customProvider: true, position: 1 }),
+@@ -282,9 +295,10 @@ describe('model list editing', () => {
+   })
+ 
+   it('keeps the reasoning slot folded by default for a catalog provider', async () => {
+-    const renderSlot = vi.fn((_key: string, owner: ModelReasoningOwnerProps) => (
+-      <span data-testid="reasoning-open">{String(owner.open)}</span>
+-    )) as never
++    const renderSlot = vi.fn((key: string, owner: ModelInputOwnerProps | ModelReasoningOwnerProps) =>
++      key === 'settings.models.model.reasoning'
++        ? <span data-testid="reasoning-open">{String(owner.open)}</span>
++        : null) as never
+     await mountSection({
+       providers: { openai: { models: [{ id: 'catalog-model' }] } },
+     }, renderSlot)
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index ba48b7dcd3..8e17ca50f9 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -1258,6 +1258,9 @@ importers:
+ 
+   packages/bundle/web-app:
+     dependencies:
++      '@dsh-uo/client-ui-model-input':
++        specifier: workspace:^
++        version: link:../../client/ui-dsh-uo-model-input
+       '@dsh-uo/client-ui-reasoning-effort':
+         specifier: workspace:^
+         version: link:../../client/ui-dsh-uo-reasoning-effort
+@@ -1993,6 +1996,45 @@ importers:
+         specifier: ^18.2.0
+         version: 18.3.1(react@18.3.1)
+ 
++  packages/client/ui-dsh-uo-model-input:
++    devDependencies:
++      '@deepseek-ai/cordis':
++        specifier: workspace:^
++        version: link:../../../vendor/cordis
++      '@deepseek-ai/dsh-client-locale':
++        specifier: workspace:^
++        version: link:../locale
++      '@deepseek-ai/dsh-client-runtime':
++        specifier: workspace:^
++        version: link:../runtime
++      '@deepseek-ai/dsh-client-test-runtime':
++        specifier: workspace:^
++        version: link:../../test-support/client-runtime
++      '@deepseek-ai/dsh-client-ui-primitives':
++        specifier: workspace:^
++        version: link:../ui-primitives
++      '@deepseek-ai/dsh-client-ui-settings-models':
++        specifier: workspace:^
++        version: link:../ui-settings-models
++      '@deepseek-ai/dsh-client-ui-slots':
++        specifier: workspace:^
++        version: link:../ui-slots
++      '@deepseek-ai/dsh-invariants':
++        specifier: workspace:^
++        version: link:../../runtime-diagnostics/invariants
++      '@testing-library/react':
++        specifier: ^16.1.0
++        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
++      '@types/react':
++        specifier: ~18.3.1
++        version: 18.3.31
++      react:
++        specifier: ^18.2.0
++        version: 18.3.1
++      react-dom:
++        specifier: ^18.2.0
++        version: 18.3.1(react@18.3.1)
++
+   packages/client/ui-dsh-uo-reasoning-effort:
+     devDependencies:
+       '@deepseek-ai/cordis':
+diff --git a/tsconfig.client.json b/tsconfig.client.json
+index 7933ad0d57..c066e4dfad 100644
+--- a/tsconfig.client.json
++++ b/tsconfig.client.json
+@@ -91,6 +91,7 @@
+     { "path": "./packages/client/ui-settings" },
+     { "path": "./packages/client/ui-settings-general" },
+     { "path": "./packages/client/ui-settings-models" },
++    { "path": "./packages/client/ui-dsh-uo-model-input" },
+     { "path": "./packages/client/ui-dsh-uo-reasoning-effort" },
+     { "path": "./packages/client/ui-settings-plugin-inventory" },
+     { "path": "./packages/client/locale" },

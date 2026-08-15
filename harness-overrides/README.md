@@ -6,10 +6,16 @@
 
 - `packages/client/ui-dsh-uo-upstream-status`：仅在 Electron preload API 存在且侧栏展开时显示的上游状态入口。
 - `packages/client/ui-dsh-uo-reasoning-effort`：占用 Models 页单模型 slot 的独立 Cordis 客户端插件，负责思考强度折叠、预设、自定义映射和兼容字段编辑。
+- `packages/client/ui-dsh-uo-model-input`：占用 Models 页独立单模型 slot 的输入能力插件，提供跟随思考映射预设的自动模式，以及仅文本、文本与图片两种手动模式。
 - `patches/0001-dsh-uo-upstream-status.patch`：侧栏横向页脚布局、插件注册、TypeScript aggregate 与 pnpm 锁文件改动。
 - `patches/0002-dsh-uo-reasoning-effort.patch`：为官方 Models 页加入单模型思考 slot、基础参数折叠、通用映射校验以及 Web bundle 默认插件组合。官方组件只传递模型草稿和展开回调；思考界面与映射逻辑由独立插件提供。自定义提供方展开模型时默认显示思考设置，但不自动写入映射。Gemini 不在预设中。
+- `patches/0003-dsh-uo-model-input.patch`：在基础参数与思考强度之间加入独立输入能力 slot，并将插件登记到 Web bundle、TypeScript aggregate 与 pnpm 锁文件。
+
+输入能力插件只写 Harness 已有的模型 `input` 字段。自动模式从同一模型已经保存的思考映射反推用户选择的预设：OpenAI GPT、Anthropic Claude、xAI Grok、Kimi 写入 `[text, image]`，GLM、DeepSeek 写入 `[text]`；切换预设时会继续同步，手动选择输入模式后停止跟随。自定义映射或没有选择预设时，自动模式删除显式声明，由 Harness 依次使用内置模型目录、提供方 `defaultInput`，最后回落到 `[text]`。插件不会探测上游接口，也不会按模型 ID 猜测。遇到插件尚不认识的未来模态时，界面保留原配置，直到用户主动选择其他模式。
 
 思考插件不写入 DSH-UO 专属设置字段。上游提供等价功能时，可先从 `cordis.patch.yml` 移除插件条目停止构建注入，再分别删除 bundle 依赖、TypeScript 引用和插件目录；Models 页在 slot 无占用者时仍可使用。最后对照上游实现决定是否保留通用校验与折叠补丁。
+
+输入能力插件也可独立退场。移除 `dsh-uo-model-input` 的 Cordis 条目、bundle 依赖、TypeScript 引用和覆盖源码后，Harness 仍会识别已经保存的 `input`；若官方提供等价编辑器，再对照其 slot 或内置界面决定是否删除 `0003` 的 Models 页接入改动。
 
 准备源码：
 

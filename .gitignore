@@ -6,5 +6,5 @@ release/
 resources/runtime/
 *.log
 /TODO.md
-dev.ps1
+/HARNESS_OVERRIDES.md
 .codex/
