@@ -107,8 +107,6 @@ function StatusDetails({ status, t }: {
         label={t('field.latestCommit')}
         value={<a className={css.commitLink} href={status.latestUrl} target="_blank" rel="noreferrer"><code>{shortSha(status.latestCommit)}</code></a>}
       />
-      <Detail label={t('field.latestTitle')} value={status.latestTitle} />
-      <Detail label={t('field.latestTime')} value={formatDate(status.latestCommittedAt)} />
       <Detail label={t('field.difference')} value={resolveDifference(status, t)} tone={status.state} />
     </dl>
   )
@@ -153,11 +151,4 @@ function resolveDifference(status: HarnessUpstreamStatus, t: UpstreamStatusActio
 
 function shortSha(value: string): string {
   return value.slice(0, 8)
-}
-
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(navigator.language, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value))
 }
