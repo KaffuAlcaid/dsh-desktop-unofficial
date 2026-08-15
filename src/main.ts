@@ -5,7 +5,8 @@ import { DshServer, type DshExit } from './dsh-process.js'
 import { DesktopLogger, errorText } from './logger.js'
 import { checkHarnessUpstream } from './upstream-status.js'
 
-const PRODUCT_NAME = 'DSH Desktop Unofficial'
+const PRODUCT_NAME = 'DSH UO'
+const PROFILE_NAME = 'DSH Desktop Unofficial'
 const CHECK_HARNESS_UPSTREAM_CHANNEL = 'dsh-desktop:check-harness-upstream'
 
 let mainWindow: BrowserWindow | null = null
@@ -14,7 +15,8 @@ let logger: DesktopLogger | undefined
 let quitting = false
 let allowedOrigin: string | undefined
 
-app.setName(PRODUCT_NAME)
+// Keep the existing Electron profile path until user-data migration is implemented.
+app.setName(PROFILE_NAME)
 
 if (!app.requestSingleInstanceLock()) {
   app.quit()
@@ -159,7 +161,10 @@ function resolveHarnessManifestPath(): string {
 function resolveNodeExecutable(): string {
   const configured = process.env['DSH_DESKTOP_NODE_EXECUTABLE']?.trim()
   if (configured !== undefined && configured.length > 0) return resolve(configured)
-  if (app.isPackaged) return join(process.resourcesPath, 'runtime', 'node', 'node.exe')
+  if (app.isPackaged) {
+    const filename = process.platform === 'win32' ? 'node.exe' : 'node'
+    return join(process.resourcesPath, 'runtime', 'node', filename)
+  }
   return 'node'
 }
 

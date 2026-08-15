@@ -1,11 +1,31 @@
+# Dependencies and generated output
 node_modules/
 dist/
 .build/
 out/
 release/
 resources/runtime/
+coverage/
+test-results/
+playwright-report/
+*.tsbuildinfo
+
+# Local environment and editor files
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+*.code-workspace
 *.log
+*.log.*
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Personal project notes
 /TODO.md
 /HARNESS_COMMUNITY.md
 /HARNESS_OVERRIDES.md
+/PACKAGING.md
 .codex/

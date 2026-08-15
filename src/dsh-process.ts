@@ -43,8 +43,7 @@ export class DshServer {
   async start(): Promise<string> {
     if (this.child !== undefined) throw new Error('DSH server has already been started')
 
-    const entry = join(this.options.harnessDir, 'apps', 'cli', 'lib', 'bin.js')
-    await access(entry)
+    const entry = await resolveDshEntry(this.options.harnessDir)
     await mkdir(this.options.homeDir, { recursive: true })
     await mkdir(this.options.workspaceDir, { recursive: true })
 
@@ -128,6 +127,22 @@ export class DshServer {
     child.kill('SIGKILL')
     await waitForExit(child, 1_000)
   }
+}
+
+async function resolveDshEntry(harnessDir: string): Promise<string> {
+  const candidates = [
+    join(harnessDir, 'apps', 'cli', 'lib', 'bin.js'),
+    join(harnessDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+  ]
+  for (const candidate of candidates) {
+    try {
+      await access(candidate)
+      return candidate
+    } catch {
+      // Try the next supported runtime layout.
+    }
+  }
+  throw new Error(`DSH entry was not found under ${harnessDir}`)
 }
 
 function hasExited(child: ChildProcess): boolean {

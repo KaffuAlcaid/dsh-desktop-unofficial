@@ -1,0 +1,52 @@
+appId: io.github.kaffualcaid.dsh-desktop-unofficial
+productName: DSH UO
+asar: true
+npmRebuild: false
+electronDownload:
+  cache: .build/electron-cache
+
+directories:
+  output: release
+
+files:
+  - dist/**/*
+  - package.json
+
+extraResources:
+  - from: resources/runtime
+    to: runtime
+  # A root node_modules directory is skipped by electron-builder's generic copier.
+  - from: resources/runtime/node_modules
+    to: runtime/node_modules
+
+artifactName: DSH-UO-${version}-${os}-${arch}.${ext}
+
+win:
+  executableName: DSH-Desktop-Unofficial
+  target:
+    - target: zip
+      arch:
+        - x64
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  include: build/installer.nsh
+  oneClick: false
+  perMachine: true
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: DSH UO
+  runAfterFinish: true
+  artifactName: DSH-UO-Setup-${version}-${arch}.${ext}
+
+linux:
+  executableName: dsh-uo
+  category: Development
+  target:
+    - target: zip
+      arch:
+        - x64
