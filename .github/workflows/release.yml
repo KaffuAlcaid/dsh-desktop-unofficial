@@ -259,3 +259,4 @@ jobs:
           - Wayland sessions use XWayland by default to avoid known GPU process crashes on some NVIDIA drivers.
           - Native Wayland is experimental; pass --ozone-platform=wayland to opt in.
           - XWayland must be installed."
+          fi
