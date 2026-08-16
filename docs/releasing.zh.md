@@ -38,6 +38,8 @@ git push origin "v$version"
 
 标签与版本不一致，或者 Harness 清单缺少完整 Git 提交或 npm 包名时，工作流会拒绝发布。
 
+已有标签需要重新执行发布时，打开 **Actions → Build and Release → Run workflow**，输入该标签，例如 `v0.1.0`。手动任务会检出指定标签，并把重新构建的产物上传到已有 Release。
+
 ## 4. 检查 GitHub Release
 
 完成后的工作流必须发布以下四个文件：

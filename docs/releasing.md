@@ -38,6 +38,8 @@ git push origin "v$version"
 
 The workflow rejects a tag/version mismatch and a Harness manifest without a full Git commit or npm package name.
 
+If an existing tag needs another publish attempt, open **Actions → Build and Release → Run workflow** and enter that tag, for example `v0.1.0`. The manual run checks out the specified tag and uploads the rebuilt assets to its existing Release.
+
 ## 4. Verify the GitHub Release
 
 The completed workflow must publish exactly these files:
