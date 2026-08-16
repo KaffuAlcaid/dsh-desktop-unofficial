@@ -5,6 +5,9 @@ export CI=true
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_root=$(cd -- "$script_dir/.." && pwd)
+export COREPACK_HOME="$project_root/.build/corepack"
+export XDG_CACHE_HOME="$project_root/.build/xdg-cache"
+export ELECTRON_BUILDER_CACHE="$project_root/.build/electron-builder-cache"
 harness_root=${HARNESS_DIR:-"$project_root/.build/deepseek-harness-linux"}
 runtime_root="$project_root/resources/runtime"
 tarball_root="$project_root/.build/runtime-tarballs-linux-x64"
@@ -17,12 +20,6 @@ pnpm_version=11.7.0
 
 [[ $(uname -s) == Linux ]] || { echo 'The Linux portable package must be built on Linux.' >&2; exit 1; }
 [[ $(uname -m) == x86_64 ]] || { echo 'The first portable release supports Linux x64 only.' >&2; exit 1; }
-[[ -f "$harness_root/package.json" ]] || {
-  echo "Prepared Harness source was not found: $harness_root" >&2
-  echo "Run: bash scripts/prepare-harness.sh" >&2
-  exit 1
-}
-[[ -d "$harness_root/node_modules" ]] || { echo "Harness dependencies were not found: $harness_root/node_modules" >&2; exit 1; }
 
 if command -v corepack >/dev/null 2>&1 && corepack pnpm --version >/dev/null 2>&1; then
   pnpm_cmd=(corepack pnpm)
@@ -36,8 +33,24 @@ else
 fi
 
 run_pnpm() {
-  (cd -- "$1" && "${pnpm_cmd[@]}" --config.confirmModulesPurge=false "${@:2}")
+  (cd -- "$1" && "${pnpm_cmd[@]}" --config.confirmModulesPurge=false --store-dir "$project_root/.build/pnpm-store" "${@:2}")
 }
+
+if [[ ! -f "$builder_cli" ]]; then
+  echo 'Installing desktop dependencies...'
+  run_pnpm "$project_root" install --frozen-lockfile
+fi
+[[ -f "$builder_cli" ]] || { echo "electron-builder was not found: $builder_cli" >&2; exit 1; }
+
+if [[ ! -f "$harness_root/package.json" ]]; then
+  echo 'Preparing pinned Harness source...'
+  bash "$script_dir/prepare-harness.sh" "" "$harness_root"
+fi
+[[ -f "$harness_root/package.json" ]] || { echo "Prepared Harness source was not found: $harness_root" >&2; exit 1; }
+if [[ ! -d "$harness_root/node_modules" ]]; then
+  echo 'Installing Harness dependencies...'
+  run_pnpm "$harness_root" install --frozen-lockfile
+fi
 
 safe_remove() {
   case "$1" in
@@ -47,7 +60,8 @@ safe_remove() {
 }
 
 echo 'Building Harness...'
-run_pnpm "$harness_root" run build
+run_pnpm "$harness_root" run build:lib
+run_pnpm "$harness_root" --filter @deepseek-ai/dsh-web-frontend run build
 run_pnpm "$harness_root/native/landlock-run" run build:ts
 
 safe_remove "$tarball_root"
@@ -87,12 +101,12 @@ mkdir -p -- "$runtime_root/node"
 install -m 0755 "$node_source/bin/node" "$runtime_root/node/node"
 cp -- "$node_source/LICENSE" "$runtime_root/node/LICENSE"
 
-echo 'Building the Electron portable ZIP...'
+echo 'Building the Electron portable ZIP and AppImage...'
 run_pnpm "$project_root" run build
 CSC_IDENTITY_AUTO_DISCOVERY=false node "$builder_cli" \
   --config "$builder_config" \
-  --linux zip \
+  --linux zip AppImage \
   --x64 \
   --publish never
 
-echo "Linux portable package written to $project_root/release"
+echo "Linux portable packages written to $project_root/release"

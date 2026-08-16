@@ -21,6 +21,8 @@ $manifestPath = Join-Path $projectRoot 'upstream\harness.json'
 $stageScript = Join-Path $PSScriptRoot 'stage-harness-runtime.mjs'
 $builderConfig = Join-Path $projectRoot 'electron-builder.yml'
 $builderCli = Join-Path $projectRoot 'node_modules\electron-builder\cli.js'
+$pnpmStore = Join-Path $projectRoot '.build\pnpm-store'
+$env:COREPACK_HOME = Join-Path $projectRoot '.build\corepack'
 $env:ELECTRON_BUILDER_CACHE = Join-Path $projectRoot '.build\electron-builder-cache'
 
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
@@ -32,12 +34,6 @@ if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [Runtime.In
 if ($null -eq (Get-Command corepack -ErrorAction SilentlyContinue)) {
   throw 'Corepack was not found. Install a supported Node.js version before packaging.'
 }
-if (-not (Test-Path -LiteralPath (Join-Path $harnessRoot 'package.json') -PathType Leaf)) {
-  throw "Prepared Harness source was not found: $harnessRoot`nRun 'corepack pnpm run prepare:harness' first."
-}
-if (-not (Test-Path -LiteralPath (Join-Path $harnessRoot 'node_modules') -PathType Container)) {
-  throw "Harness dependencies were not found: $harnessRoot\node_modules"
-}
 
 function Invoke-Pnpm {
   param(
@@ -46,7 +42,7 @@ function Invoke-Pnpm {
   )
   Push-Location -LiteralPath $WorkingDirectory
   try {
-    & corepack pnpm --config.confirmModulesPurge=false @Arguments
+    & corepack pnpm --config.confirmModulesPurge=false --store-dir $pnpmStore @Arguments
     if ($LASTEXITCODE -ne 0) {
       throw "pnpm failed with exit code $LASTEXITCODE in $WorkingDirectory"
     }
@@ -63,8 +59,31 @@ function Invoke-Node {
   }
 }
 
+if (-not (Test-Path -LiteralPath $builderCli -PathType Leaf)) {
+  Write-Host 'Installing desktop dependencies...'
+  Invoke-Pnpm -WorkingDirectory $projectRoot -Arguments @('install', '--frozen-lockfile')
+}
+if (-not (Test-Path -LiteralPath $builderCli -PathType Leaf)) {
+  throw "electron-builder was not found: $builderCli"
+}
+
+$harnessPackage = Join-Path $harnessRoot 'package.json'
+if (-not (Test-Path -LiteralPath $harnessPackage -PathType Leaf)) {
+  Write-Host 'Preparing pinned Harness source...'
+  & (Join-Path $PSScriptRoot 'prepare-harness.ps1') -OutputPath $harnessRoot
+}
+if (-not (Test-Path -LiteralPath $harnessPackage -PathType Leaf)) {
+  throw "Prepared Harness source was not found: $harnessRoot"
+}
+$harnessModules = Join-Path $harnessRoot 'node_modules'
+if (-not (Test-Path -LiteralPath $harnessModules -PathType Container)) {
+  Write-Host 'Installing Harness dependencies...'
+  Invoke-Pnpm -WorkingDirectory $harnessRoot -Arguments @('install', '--frozen-lockfile')
+}
+
 Write-Host 'Building Harness...'
-Invoke-Pnpm -WorkingDirectory $harnessRoot -Arguments @('run', 'build')
+Invoke-Pnpm -WorkingDirectory $harnessRoot -Arguments @('run', 'build:lib')
+Invoke-Pnpm -WorkingDirectory $harnessRoot -Arguments @('--filter', '@deepseek-ai/dsh-web-frontend', 'run', 'build')
 Invoke-Pnpm -WorkingDirectory (Join-Path $harnessRoot 'native\landlock-run') -Arguments @('run', 'build:ts')
 
 if (Test-Path -LiteralPath $tarballRoot) {

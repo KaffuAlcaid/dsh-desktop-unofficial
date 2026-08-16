@@ -7,9 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-if ([string]::IsNullOrWhiteSpace($UpstreamPath)) {
-  $UpstreamPath = Join-Path $projectRoot '..\deepseek-harness'
-}
+$automaticUpstream = [string]::IsNullOrWhiteSpace($UpstreamPath)
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
   $OutputPath = Join-Path $projectRoot '.build\deepseek-harness'
 }
@@ -47,6 +45,34 @@ if ($commit -notmatch '^[0-9a-fA-F]{40}$') {
   throw 'upstream/harness.json must contain a full Git commit SHA.'
 }
 
+function Invoke-Git {
+  param([string[]]$GitArguments)
+  & git @GitArguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "git failed with exit code $LASTEXITCODE"
+  }
+}
+
+if ($automaticUpstream) {
+  $repository = [string]$manifest.repository
+  if ([string]::IsNullOrWhiteSpace($repository)) {
+    throw 'upstream/harness.json must contain a repository URL.'
+  }
+  $UpstreamPath = Join-Path $projectRoot '.build\deepseek-harness-upstream'
+  if (Test-Path -LiteralPath $UpstreamPath) {
+    if (-not (Test-Path -LiteralPath (Join-Path $UpstreamPath '.git') -PathType Container)) {
+      throw "Automatic upstream path is not a Git working tree: $UpstreamPath"
+    }
+    Invoke-Git -GitArguments @('-C', $UpstreamPath, 'remote', 'set-url', 'origin', $repository)
+  } else {
+    $upstreamParent = Split-Path -Parent $UpstreamPath
+    New-Item -ItemType Directory -Path $upstreamParent -Force | Out-Null
+    Invoke-Git -GitArguments @('init', $UpstreamPath)
+    Invoke-Git -GitArguments @('-C', $UpstreamPath, 'remote', 'add', 'origin', $repository)
+  }
+  Invoke-Git -GitArguments @('-C', $UpstreamPath, 'fetch', '--depth=1', 'origin', $commit)
+}
+
 $upstreamRoot = (Resolve-Path -LiteralPath $UpstreamPath).Path
 if (-not (Test-Path -LiteralPath (Join-Path $upstreamRoot '.git'))) {
   throw "Upstream path is not a Git working tree: $upstreamRoot"
@@ -55,14 +81,6 @@ if (-not (Test-Path -LiteralPath (Join-Path $upstreamRoot '.git'))) {
 $preparedRoot = [IO.Path]::GetFullPath($OutputPath)
 if (Test-Path -LiteralPath $preparedRoot) {
   throw "Prepared Harness path already exists: $preparedRoot`nRemove it with 'git -C `"$upstreamRoot`" worktree remove `"$preparedRoot`"' before preparing again."
-}
-
-function Invoke-Git {
-  param([string[]]$GitArguments)
-  & git @GitArguments
-  if ($LASTEXITCODE -ne 0) {
-    throw "git failed with exit code $LASTEXITCODE"
-  }
 }
 
 Invoke-Git -GitArguments @('-c', "safe.directory=$upstreamRoot", '-C', $upstreamRoot, 'cat-file', '-e', "$commit^{commit}")

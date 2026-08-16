@@ -4,7 +4,7 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_root=$(cd -- "$script_dir/.." && pwd)
-upstream_path=${1:-"$project_root/../deepseek-harness"}
+upstream_path=${1:-}
 output_path=${2:-"$project_root/.build/deepseek-harness-linux"}
 manifest_path="$project_root/upstream/harness.json"
 
@@ -30,6 +30,24 @@ done
 
 commit=$(node -e 'const fs = require("node:fs"); const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(value.commit ?? ""))' "$manifest_path")
 [[ "$commit" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'upstream/harness.json must contain a full Git commit SHA.' >&2; exit 1; }
+
+if [[ -z "$upstream_path" ]]; then
+  repository=$(node -e 'const fs = require("node:fs"); const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(value.repository ?? ""))' "$manifest_path")
+  [[ -n "$repository" ]] || { echo 'upstream/harness.json must contain a repository URL.' >&2; exit 1; }
+  upstream_path="$project_root/.build/deepseek-harness-upstream"
+  if [[ -e "$upstream_path" && ! -d "$upstream_path/.git" ]]; then
+    echo "Automatic upstream path is not a Git working tree: $upstream_path" >&2
+    exit 1
+  fi
+  if [[ ! -d "$upstream_path/.git" ]]; then
+    mkdir -p -- "$(dirname -- "$upstream_path")"
+    git init "$upstream_path"
+    git -C "$upstream_path" remote add origin "$repository"
+  else
+    git -C "$upstream_path" remote set-url origin "$repository"
+  fi
+  git -C "$upstream_path" fetch --depth=1 origin "$commit"
+fi
 
 upstream_root=$(realpath "$upstream_path")
 prepared_root=$(realpath -m "$output_path")

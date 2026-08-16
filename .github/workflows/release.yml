@@ -185,20 +185,25 @@ jobs:
       - name: Build Linux package
         run: bash scripts/package-portable.sh
 
-      - name: Verify Linux artifact
+      - name: Verify Linux artifacts
         shell: bash
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           archive="release/DSH-UO-$VERSION-linux-x64.zip"
+          appimage="release/DSH-UO-$VERSION-linux-x86_64.AppImage"
           test -f "$archive"
           unzip -t "$archive"
+          test -s "$appimage"
+          test -x "$appimage"
 
-      - name: Store Linux release asset
+      - name: Store Linux release assets
         uses: actions/upload-artifact@v7
         with:
           name: release-linux-x64
-          path: release/DSH-UO-${{ needs.metadata.outputs.version }}-linux-x64.zip
+          path: |
+            release/DSH-UO-${{ needs.metadata.outputs.version }}-linux-x64.zip
+            release/DSH-UO-${{ needs.metadata.outputs.version }}-linux-x86_64.AppImage
           if-no-files-found: error
           retention-days: 1
 
@@ -219,7 +224,7 @@ jobs:
           name: release-windows-x64
           path: dist
 
-      - name: Download Linux release asset
+      - name: Download Linux release assets
         uses: actions/download-artifact@v8
         with:
           name: release-linux-x64
@@ -233,8 +238,8 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           mapfile -t assets < <(find dist -maxdepth 1 -type f -print | sort)
-          if [ "${#assets[@]}" -ne 3 ]; then
-            echo "Expected three release assets, found ${#assets[@]}" >&2
+          if [ "${#assets[@]}" -ne 4 ]; then
+            echo "Expected four release assets, found ${#assets[@]}" >&2
             exit 1
           fi
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
@@ -243,4 +248,9 @@ jobs:
             gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
               --verify-tag \
               --title "DSH UO v$VERSION" \
-              --notes "Automated build of DSH UO $VERSION."
+              --notes "Automated build of DSH UO $VERSION.
+
+Linux compatibility:
+- Wayland sessions use XWayland by default to avoid known GPU process crashes on some NVIDIA drivers.
+- Native Wayland is experimental; pass --ozone-platform=wayland to opt in.
+- XWayland must be installed."

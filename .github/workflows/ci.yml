@@ -14,8 +14,8 @@ env:
   PNPM_VERSION: 11.7.0
 
 jobs:
-  validate:
-    name: Validate desktop and Harness overrides
+  linux:
+    name: Package Linux x64
     runs-on: ubuntu-22.04
 
     steps:
@@ -42,24 +42,139 @@ jobs:
       - name: Install desktop dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build desktop
-        run: pnpm run build
+      - name: Build Linux packages
+        run: bash scripts/package-portable.sh
 
-      - name: Prepare pinned Harness source
+      - name: Smoke-test packaged Linux desktop
         shell: bash
         run: |
-          repository="$(node -p "JSON.parse(require('node:fs').readFileSync('upstream/harness.json', 'utf8')).repository")"
-          commit="$(node -p "JSON.parse(require('node:fs').readFileSync('upstream/harness.json', 'utf8')).commit")"
-          upstream_path="$RUNNER_TEMP/deepseek-harness"
-          git init "$upstream_path"
-          git -C "$upstream_path" remote add origin "$repository"
-          git -C "$upstream_path" fetch --depth=1 origin "$commit"
-          bash scripts/prepare-harness.sh "$upstream_path" "$GITHUB_WORKSPACE/.build/deepseek-harness-linux"
+          smoke_home="$RUNNER_TEMP/dsh-uo-smoke"
+          electron_log="$RUNNER_TEMP/dsh-uo-electron.log"
+          mkdir -p "$smoke_home/.config"
+          export HOME="$smoke_home"
+          export XDG_CONFIG_HOME="$smoke_home/.config"
+          export XDG_SESSION_TYPE=wayland
+          unset WAYLAND_DISPLAY
+          timeout 120s xvfb-run --auto-servernum bash -euo pipefail -c '
+            smoke_home="$1"
+            electron_log="$2"
+            app_pid=""
 
-      - name: Install Harness dependencies
-        working-directory: .build/deepseek-harness-linux
+            cleanup() {
+              if [[ -n "$app_pid" ]] && kill -0 "$app_pid" 2>/dev/null; then
+                kill -TERM "$app_pid"
+                wait "$app_pid" || true
+              fi
+            }
+            trap cleanup EXIT
+
+            release/linux-unpacked/dsh-uo --no-sandbox >"$electron_log" 2>&1 &
+            app_pid=$!
+            for _ in {1..90}; do
+              desktop_log=$(find "$smoke_home" -path "*/DSH-UO/logs/dsh-desktop.log" -print -quit)
+              if [[ -n "$desktop_log" ]] && grep -Fq "WebUI loaded" "$desktop_log"; then
+                exit 0
+              fi
+              if ! kill -0 "$app_pid" 2>/dev/null; then
+                if wait "$app_pid"; then
+                  status=0
+                else
+                  status=$?
+                fi
+                echo "Packaged Linux desktop exited before loading WebUI (code $status)"
+                cat "$electron_log"
+                exit 1
+              fi
+              sleep 1
+            done
+
+            echo "Packaged Linux desktop did not load WebUI within 90 seconds"
+            cat "$electron_log"
+            exit 1
+          ' bash "$smoke_home" "$electron_log"
+
+      - name: Verify Linux artifacts
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          archive="release/DSH-UO-$version-linux-x64.zip"
+          appimage="release/DSH-UO-$version-linux-x86_64.AppImage"
+          test -f "$archive"
+          unzip -t "$archive"
+          entries="$(unzip -Z1 "$archive")"
+          for entry in dsh-uo dsh-uo-bin resources/runtime/harness.json resources/runtime/node/node resources/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js; do
+            grep -Fxq "$entry" <<<"$entries"
+          done
+          release/linux-unpacked/resources/runtime/node/node release/linux-unpacked/resources/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js --version
+          test -s "$appimage"
+          test -x "$appimage"
+          "$appimage" --appimage-offset
+          "$appimage" --appimage-extract '*resources/runtime/harness.json'
+          test -f squashfs-root/resources/runtime/harness.json
+
+  windows:
+    name: Package Windows x64
+    runs-on: windows-2025
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            upstream/harness.json
+
+      - name: Install desktop dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build Harness with injected overrides
-        working-directory: .build/deepseek-harness-linux
-        run: pnpm run build
+      - name: Build Windows packages
+        shell: pwsh
+        run: .\scripts\package-portable.ps1 -Target all
+
+      - name: Verify Windows artifacts
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw -Encoding UTF8 package.json | ConvertFrom-Json).version
+          $archive = "release\DSH-UO-$version-win-x64.zip"
+          $installer = "release\DSH-UO-Setup-$version-x64.exe"
+          $required = @($archive, $installer)
+          foreach ($path in $required) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Expected CI artifact was not created: $path"
+            }
+          }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
+          try {
+            $entries = $zip.Entries.FullName
+            foreach ($entry in @(
+              'resources/runtime/harness.json',
+              'resources/runtime/node/node.exe',
+              'resources/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js'
+            )) {
+              if ($entries -notcontains $entry) {
+                throw "Windows ZIP is missing required runtime entry: $entry"
+              }
+            }
+          } finally {
+            $zip.Dispose()
+          }
+          $node = 'release\win-unpacked\resources\runtime\node\node.exe'
+          $dsh = 'release\win-unpacked\resources\runtime\node_modules\@deepseek-ai\dsh\lib\bin.js'
+          & $node $dsh --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged Windows DSH runtime exited with code $LASTEXITCODE"
+          }

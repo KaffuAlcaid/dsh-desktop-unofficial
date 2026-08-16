@@ -20,6 +20,7 @@ extraResources:
     to: runtime/node_modules
 
 artifactName: DSH-UO-${version}-${os}-${arch}.${ext}
+afterPack: ./scripts/after-pack.mjs
 
 win:
   executableName: DSH-Desktop-Unofficial
@@ -48,5 +49,8 @@ linux:
   category: Development
   target:
     - target: zip
+      arch:
+        - x64
+    - target: AppImage
       arch:
         - x64

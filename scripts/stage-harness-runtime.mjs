@@ -11,8 +11,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { basename, dirname, join, parse, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { basename, dirname, join, parse, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
 function readJson(path) {
@@ -203,7 +202,7 @@ const members = allMembers.filter(member => reachableNames.has(member.name))
 rmSync(outputRoot, { recursive: true, force: true })
 mkdirSync(outputRoot, { recursive: true })
 const localDependencies = Object.fromEntries(
-  members.map(member => [member.name, pathToFileURL(member.tarball).href]),
+  members.map(member => [member.name, `file:${relative(outputRoot, member.tarball).replaceAll('\\', '/')}`]),
 )
 writeFileSync(join(outputRoot, 'package.json'), `${JSON.stringify({
   name: 'dsh-uo-harness-runtime',

@@ -22,6 +22,7 @@ playwright-report/
 .DS_Store
 Thumbs.db
 Desktop.ini
+.agents/
 
 # Personal project notes
 /TODO.md

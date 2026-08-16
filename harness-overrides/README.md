@@ -22,10 +22,16 @@
 
 输入能力插件也可独立退场。移除 `dsh-uo-model-input` 的 Cordis 条目、bundle 依赖、TypeScript 引用和覆盖源码后，Harness 仍会识别已经保存的 `input`；若官方提供等价编辑器，再对照其 slot 或内置界面决定是否删除 `0003` 的 Models 页接入改动。
 
-准备源码：
+准备源码（打包脚本在缺少 prepared Harness 时也会自动执行此步骤）：
 
 ```powershell
 corepack pnpm run prepare:harness
 ```
 
-默认输入为相邻目录 `..\deepseek-harness`，输出为 `.build\deepseek-harness`。已有输出目录会让脚本停止；先通过错误信息给出的 `git worktree remove` 命令移除旧 worktree，再重新准备。
+```bash
+corepack pnpm run prepare:harness:linux
+```
+
+默认从 `upstream/harness.json` 指定的仓库和提交自动拉取源码，缓存于 `.build/deepseek-harness-upstream`；Windows 输出为 `.build/deepseek-harness`，Linux 输出为 `.build/deepseek-harness-linux`。仍可向准备脚本显式传入已有上游 Git 工作树。已有输出目录会让脚本停止；先通过错误信息给出的 `git worktree remove` 命令移除旧 worktree，再重新准备。
+
+源码、包管理器和打包工具缓存均保存在项目的 `.build` 目录，该目录已由根 `.gitignore` 忽略。
