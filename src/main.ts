@@ -142,7 +142,7 @@ function registerDesktopApi(): void {
       const status = await checkHarnessUpstream(resolveHarnessManifestPath())
       logger?.info(
         'upstream',
-        `Harness status: ${status.state} (bundled ${status.currentCommit}, official ${status.latestCommit})`,
+        `Harness source: ${status.state} (bundled ${status.currentCommit}, official ${status.latestCommit}); npm ${status.latestPublishedVersion}`,
       )
       return { ok: true, status }
     } catch (error) {

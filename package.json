@@ -2,6 +2,13 @@
   "name": "dsh-desktop-unofficial",
   "version": "0.1.0",
   "description": "Unofficial desktop distribution for DeepSeek Harness",
+  "author": "Kaffu_Alcaid",
+  "license": "MIT",
+  "homepage": "https://github.com/KaffuAlcaid/dsh-desktop-unofficial",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KaffuAlcaid/dsh-desktop-unofficial.git"
+  },
   "private": true,
   "type": "module",
   "main": "dist/main.js",

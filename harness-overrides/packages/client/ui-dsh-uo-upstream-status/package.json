@@ -1,6 +1,6 @@
 {
   "name": "@dsh-uo/client-ui-upstream-status",
-  "description": "DSH-UO sidebar action for checking the bundled Harness commit against the official repository",
+  "description": "DSH-UO sidebar action for checking bundled Harness source and the official npm release",
   "version": "0.1.0",
   "private": true,
   "repository": {

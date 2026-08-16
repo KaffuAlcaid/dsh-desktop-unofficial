@@ -3,15 +3,21 @@ import { net } from 'electron'
 import type { HarnessUpstreamState, HarnessUpstreamStatus } from './desktop-api.js'
 
 const GITHUB_API_ROOT = 'https://api.github.com'
+const NPM_REGISTRY_ROOT = 'https://registry.npmjs.org'
 const REQUEST_TIMEOUT_MS = 15_000
-const API_HEADERS = {
+const GITHUB_API_HEADERS = {
   Accept: 'application/vnd.github+json',
   'User-Agent': 'DSH-Desktop-Unofficial',
   'X-GitHub-Api-Version': '2022-11-28',
 } as const
+const NPM_REGISTRY_HEADERS = {
+  Accept: 'application/json',
+  'User-Agent': 'DSH-Desktop-Unofficial',
+} as const
 
 interface HarnessManifest {
   repository: string
+  npmPackage: string
   commit: string
   version: string
 }
@@ -42,9 +48,22 @@ export async function checkHarnessUpstream(manifestPath: string): Promise<Harnes
   const manifest = await readManifest(manifestPath)
   const repository = parseGitHubRepository(manifest.repository)
   const apiBase = `${GITHUB_API_ROOT}/repos/${repository.owner}/${repository.name}`
-  const repositoryInfo = parseRepository(await requestJson(apiBase))
+  const [repositoryValue, npmPackageValue] = await Promise.all([
+    requestJson(apiBase, 'GitHub API', GITHUB_API_HEADERS),
+    requestJson(
+      `${NPM_REGISTRY_ROOT}/${encodeURIComponent(manifest.npmPackage)}`,
+      'npm registry',
+      NPM_REGISTRY_HEADERS,
+    ),
+  ])
+  const repositoryInfo = parseRepository(repositoryValue)
+  const latestPublishedVersion = parseLatestPublishedVersion(npmPackageValue)
   const branch = encodeURIComponent(repositoryInfo.defaultBranch)
-  const latest = parseCommit(await requestJson(`${apiBase}/commits/${branch}`))
+  const latest = parseCommit(await requestJson(
+    `${apiBase}/commits/${branch}`,
+    'GitHub API',
+    GITHUB_API_HEADERS,
+  ))
 
   let state: HarnessUpstreamState = 'current'
   let commitsBehind = 0
@@ -52,6 +71,8 @@ export async function checkHarnessUpstream(manifestPath: string): Promise<Harnes
   if (latest.sha !== manifest.commit) {
     const comparison = parseComparison(await requestJson(
       `${apiBase}/compare/${manifest.commit}...${latest.sha}`,
+      'GitHub API',
+      GITHUB_API_HEADERS,
     ))
     if (comparison.status === 'ahead') {
       state = 'behind'
@@ -69,7 +90,7 @@ export async function checkHarnessUpstream(manifestPath: string): Promise<Harnes
   return {
     state,
     defaultBranch: repositoryInfo.defaultBranch,
-    currentVersion: manifest.version,
+    sourceVersion: manifest.version,
     currentCommit: manifest.commit,
     latestCommit: latest.sha,
     latestTitle: latest.title,
@@ -77,6 +98,8 @@ export async function checkHarnessUpstream(manifestPath: string): Promise<Harnes
     latestUrl: latest.url,
     commitsBehind,
     commitsAhead,
+    npmPackage: manifest.npmPackage,
+    latestPublishedVersion,
   }
 }
 
@@ -90,10 +113,11 @@ async function readManifest(path: string): Promise<HarnessManifest> {
   }
   const record = requireRecord(value, 'Harness manifest')
   const repository = requireString(record, 'repository', 'Harness manifest')
+  const npmPackage = requireString(record, 'npmPackage', 'Harness manifest')
   const commit = requireString(record, 'commit', 'Harness manifest')
   const version = requireString(record, 'version', 'Harness manifest')
   if (!/^[0-9a-f]{40}$/iu.test(commit)) throw new Error('Harness manifest commit must be a full Git SHA')
-  return { repository, commit, version }
+  return { repository, npmPackage, commit, version }
 }
 
 function parseGitHubRepository(repository: string): { owner: string; name: string } {
@@ -110,26 +134,36 @@ function parseGitHubRepository(repository: string): { owner: string; name: strin
   return { owner: parts[0]!, name: parts[1]! }
 }
 
-async function requestJson(url: string): Promise<unknown> {
+async function requestJson(
+  url: string,
+  service: string,
+  headers: Readonly<Record<string, string>>,
+): Promise<unknown> {
   const controller = new AbortController()
   const timer = setTimeout(() => { controller.abort() }, REQUEST_TIMEOUT_MS)
   try {
     const response = await net.fetch(url, {
-      headers: API_HEADERS,
+      headers,
       signal: controller.signal,
     })
     const body = await response.json() as unknown
     if (!response.ok) {
       const detail = optionalString(body, 'message')
-      throw new Error(`GitHub API returned HTTP ${String(response.status)}${detail === undefined ? '' : `: ${detail}`}`)
+      throw new Error(`${service} returned HTTP ${String(response.status)}${detail === undefined ? '' : `: ${detail}`}`)
     }
     return body
   } catch (error) {
-    if (controller.signal.aborted) throw new Error('GitHub request timed out')
+    if (controller.signal.aborted) throw new Error(`${service} request timed out`)
     throw error
   } finally {
     clearTimeout(timer)
   }
+}
+
+function parseLatestPublishedVersion(value: unknown): string {
+  const record = requireRecord(value, 'npm package response')
+  const distTags = requireRecord(record['dist-tags'], 'npm package dist-tags')
+  return requireString(distTags, 'latest', 'npm package dist-tags')
 }
 
 function parseRepository(value: unknown): GitHubRepository {

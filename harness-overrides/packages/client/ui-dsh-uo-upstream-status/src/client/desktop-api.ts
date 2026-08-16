@@ -5,7 +5,7 @@ export type HarnessUpstreamState = 'current' | 'behind' | 'ahead' | 'diverged'
 export interface HarnessUpstreamStatus {
   state: HarnessUpstreamState
   defaultBranch: string
-  currentVersion: string
+  sourceVersion: string
   currentCommit: string
   latestCommit: string
   latestTitle: string
@@ -13,6 +13,8 @@ export interface HarnessUpstreamStatus {
   latestUrl: string
   commitsBehind: number
   commitsAhead: number
+  npmPackage: string
+  latestPublishedVersion: string
 }
 
 /** Result returned for one manual upstream check. */

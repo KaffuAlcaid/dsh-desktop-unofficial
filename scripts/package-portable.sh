@@ -33,7 +33,7 @@ else
 fi
 
 run_pnpm() {
-  (cd -- "$1" && "${pnpm_cmd[@]}" --config.confirmModulesPurge=false --store-dir "$project_root/.build/pnpm-store" "${@:2}")
+  (cd -- "$1" && "${pnpm_cmd[@]}" --config.confirmModulesPurge=false --config.store-dir="$project_root/.build/pnpm-store" "${@:2}")
 }
 
 if [[ ! -f "$builder_cli" ]]; then

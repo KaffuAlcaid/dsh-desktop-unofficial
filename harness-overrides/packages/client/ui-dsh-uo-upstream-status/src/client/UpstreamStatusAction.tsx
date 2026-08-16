@@ -17,7 +17,7 @@ type ViewState =
   | { phase: 'error'; message: string }
 
 /**
- * Render the expanded-sidebar update action and its status dialog.
+ * Render the expanded-sidebar upstream-status action and its dialog.
  * @param props - footer owner state and localized copy.
  * @returns null outside Electron and while the sidebar is collapsed.
  */
@@ -55,7 +55,7 @@ export function UpstreamStatusAction({ wide, t }: UpstreamStatusActionProps) {
           }}
         >
           <StatusIcon view={view} />
-          {status?.state === 'behind' && <span className={css.updateDot} aria-hidden="true" />}
+          {status !== undefined && hasUpstreamDifference(status) && <span className={css.updateDot} aria-hidden="true" />}
         </button>
       </Tooltip>
       <Modal
@@ -87,7 +87,9 @@ export function UpstreamStatusAction({ wide, t }: UpstreamStatusActionProps) {
 function StatusIcon({ view }: { view: ViewState }) {
   if (view.phase === 'checking') return <IconRefreshOutline16 className={css.spinning} />
   if (view.phase === 'error') return <IconWarningOutline16 />
-  if (view.phase === 'success' && view.status.state === 'current') return <IconCheckOutline16 />
+  if (view.phase === 'success'
+    && view.status.state === 'current'
+    && view.status.sourceVersion === view.status.latestPublishedVersion) return <IconCheckOutline16 />
   if (view.phase === 'success' && (view.status.state === 'ahead' || view.status.state === 'diverged')) {
     return <IconWarningOutline16 />
   }
@@ -100,7 +102,7 @@ function StatusDetails({ status, t }: {
 }) {
   return (
     <dl className={css.details}>
-      <Detail label={t('field.currentVersion')} value={status.currentVersion} />
+      <Detail label={t('field.sourceVersion')} value={status.sourceVersion} />
       <Detail label={t('field.currentCommit')} value={<code>{shortSha(status.currentCommit)}</code>} />
       <Detail label={t('field.branch')} value={status.defaultBranch} />
       <Detail
@@ -108,6 +110,8 @@ function StatusDetails({ status, t }: {
         value={<a className={css.commitLink} href={status.latestUrl} target="_blank" rel="noreferrer"><code>{shortSha(status.latestCommit)}</code></a>}
       />
       <Detail label={t('field.difference')} value={resolveDifference(status, t)} tone={status.state} />
+      <Detail label={t('field.npmPackage')} value={<code>{status.npmPackage}</code>} />
+      <Detail label={t('field.publishedVersion')} value={status.latestPublishedVersion} />
     </dl>
   )
 }
@@ -128,6 +132,9 @@ function Detail({ label, value, tone }: {
 function resolveTooltip(view: ViewState, t: UpstreamStatusActionProps['t']): string {
   if (view.phase === 'error') return t('tooltip.error')
   if (view.phase !== 'success') return t('trigger')
+  if (view.status.state === 'current' && hasPublishedDifference(view.status)) {
+    return t('tooltip.publishedDifferent')
+  }
   return t(`tooltip.${view.status.state}`)
 }
 
@@ -137,7 +144,19 @@ function resolveSummary(view: ViewState, t: UpstreamStatusActionProps['t']): str
   const status = view.status
   if (status.state === 'behind') return t('state.behind', { count: status.commitsBehind })
   if (status.state === 'ahead') return t('state.ahead', { count: status.commitsAhead })
+  if (status.state === 'diverged') return t('state.diverged')
+  if (hasPublishedDifference(status)) {
+    return t('state.publishedDifferent', { publishedVersion: status.latestPublishedVersion })
+  }
   return t(`state.${status.state}`)
+}
+
+function hasPublishedDifference(status: HarnessUpstreamStatus): boolean {
+  return status.sourceVersion !== status.latestPublishedVersion
+}
+
+function hasUpstreamDifference(status: HarnessUpstreamStatus): boolean {
+  return status.state !== 'current' || hasPublishedDifference(status)
 }
 
 function resolveDifference(status: HarnessUpstreamStatus, t: UpstreamStatusActionProps['t']): string {

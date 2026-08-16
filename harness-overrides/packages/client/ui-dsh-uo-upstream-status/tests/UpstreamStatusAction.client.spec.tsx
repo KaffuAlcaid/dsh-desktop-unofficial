@@ -44,10 +44,11 @@ describe('UpstreamStatusAction', () => {
   it('checks manually and renders the official commit in the shared modal', async () => {
     const bridge = installBridge(currentStatus())
     mount(true)
-    fireEvent.click(screen.getByRole('button', { name: 'Check for Harness updates' }))
+    fireEvent.click(screen.getByRole('button', { name: 'View Harness upstream status' }))
     await waitFor(() => {
       expect(screen.getByRole('dialog', { name: 'Harness upstream status' })).toBeTruthy()
       expect(screen.getAllByText('47f94385')).toHaveLength(2)
+      expect(screen.getByText('0.1.0-rc.6')).toBeTruthy()
     })
     expect(bridge.checkHarnessUpstream).toHaveBeenCalledOnce()
   })
@@ -57,7 +58,7 @@ function currentStatus(): HarnessUpstreamStatus {
   return {
     state: 'current',
     defaultBranch: 'master',
-    currentVersion: '0.1.0-rc.5',
+    sourceVersion: '0.1.0-rc.5',
     currentCommit: '47f943859bef60e4160492346772ded9b24f765a',
     latestCommit: '47f943859bef60e4160492346772ded9b24f765a',
     latestTitle: 'Release candidate',
@@ -65,5 +66,7 @@ function currentStatus(): HarnessUpstreamStatus {
     latestUrl: 'https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a',
     commitsBehind: 0,
     commitsAhead: 0,
+    npmPackage: '@deepseek-ai/dsh',
+    latestPublishedVersion: '0.1.0-rc.6',
   }
 }

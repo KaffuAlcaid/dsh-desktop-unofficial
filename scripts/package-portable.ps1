@@ -42,7 +42,7 @@ function Invoke-Pnpm {
   )
   Push-Location -LiteralPath $WorkingDirectory
   try {
-    & corepack pnpm --config.confirmModulesPurge=false --store-dir $pnpmStore @Arguments
+    & corepack pnpm --config.confirmModulesPurge=false "--config.store-dir=$pnpmStore" @Arguments
     if ($LASTEXITCODE -ne 0) {
       throw "pnpm failed with exit code $LASTEXITCODE in $WorkingDirectory"
     }
