@@ -59,6 +59,40 @@ function Invoke-Node {
   }
 }
 
+function Add-PortableMarker {
+  param([Parameter(Mandatory)] [string]$ArchivePath)
+
+  if (-not (Test-Path -LiteralPath $ArchivePath -PathType Leaf)) {
+    throw "Windows portable archive was not found: $ArchivePath"
+  }
+  Add-Type -AssemblyName System.IO.Compression
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $stream = [IO.File]::Open(
+    $ArchivePath,
+    [IO.FileMode]::Open,
+    [IO.FileAccess]::ReadWrite,
+    [IO.FileShare]::None
+  )
+  try {
+    $archive = [IO.Compression.ZipArchive]::new(
+      $stream,
+      [IO.Compression.ZipArchiveMode]::Update,
+      $false
+    )
+    try {
+      if ($null -eq $archive.GetEntry('.dsh-uo-portable')) {
+        $entry = $archive.CreateEntry('.dsh-uo-portable')
+        $entryStream = $entry.Open()
+        $entryStream.Dispose()
+      }
+    } finally {
+      $archive.Dispose()
+    }
+  } finally {
+    $stream.Dispose()
+  }
+}
+
 if (-not (Test-Path -LiteralPath $builderCli -PathType Leaf)) {
   Write-Host 'Installing desktop dependencies...'
   Invoke-Pnpm -WorkingDirectory $projectRoot -Arguments @('install', '--frozen-lockfile')
@@ -147,5 +181,13 @@ if ($Target -ne 'all') {
 }
 $builderArguments += @('--x64', '--publish', 'never')
 Invoke-Node -Arguments $builderArguments
+
+if ($Target -eq 'zip' -or $Target -eq 'all') {
+  $desktopManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $projectRoot 'package.json') |
+    ConvertFrom-Json
+  $portableArchive = Join-Path $projectRoot "release\DSH-UO-$($desktopManifest.version)-win-x64.zip"
+  Add-PortableMarker -ArchivePath $portableArchive
+  Write-Host "Portable data marker added to $portableArchive"
+}
 
 Write-Host "Windows $Target package written to $(Join-Path $projectRoot 'release')"

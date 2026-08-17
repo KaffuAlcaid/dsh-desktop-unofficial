@@ -1,4 +1,5 @@
-import { join, resolve } from 'node:path'
+import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron'
 import type { HarnessUpstreamCheckResult } from './desktop-api.js'
 import { DshServer, type DshExit } from './dsh-process.js'
@@ -8,6 +9,17 @@ import { checkHarnessUpstream } from './upstream-status.js'
 const PRODUCT_NAME = 'DSH UO'
 const PROFILE_NAME = 'DSH Desktop Unofficial'
 const CHECK_HARNESS_UPSTREAM_CHANNEL = 'dsh-desktop:check-harness-upstream'
+const PORTABLE_MARKER = '.dsh-uo-portable'
+const PORTABLE_IMPORT_MARKER = '.appdata-import-checked'
+const PORTABLE_FALLBACK_RESET_MARKER = '.appdata-import-fallback-reset'
+
+interface DesktopStorage {
+  homeDir: string
+  workspaceDir: string
+  logPath: string | null
+  imported: readonly string[]
+  initializationError: string | null
+}
 
 let mainWindow: BrowserWindow | null = null
 let dshServer: DshServer | undefined
@@ -15,8 +27,8 @@ let logger: DesktopLogger | undefined
 let quitting = false
 let allowedOrigin: string | undefined
 
-// Keep the existing Electron profile path until user-data migration is implemented.
 app.setName(PROFILE_NAME)
+const storage = configureDesktopStorage()
 
 if (!app.requestSingleInstanceLock()) {
   app.quit()
@@ -50,21 +62,28 @@ async function startDesktop(): Promise<void> {
   window.on('closed', () => { mainWindow = null })
   await showStatus(window, '正在启动 DSH', '正在准备本地 WebUI...')
 
-  const userData = app.getPath('userData')
-  const desktopLogger = new DesktopLogger(
-    join(app.getPath('documents'), 'DSH-UO', 'logs', 'dsh-desktop.log'),
-  )
+  if (storage.initializationError !== null) {
+    await showStatus(window, '便携数据初始化失败', storage.initializationError, true)
+    return
+  }
+
+  const logPath = storage.logPath
+    ?? join(app.getPath('documents'), 'DSH-UO', 'logs', 'dsh-desktop.log')
+  const desktopLogger = new DesktopLogger(logPath)
   logger = desktopLogger
   desktopLogger.info(
     'desktop',
     `Starting ${PRODUCT_NAME} ${app.getVersion()} (Electron ${process.versions.electron}, Node ${process.versions.node})`,
   )
+  if (storage.imported.length > 0) {
+    desktopLogger.info('desktop', `Imported portable data from AppData: ${storage.imported.join(', ')}`)
+  }
   const server = new DshServer(
     {
       harnessDir: resolveHarnessDir(),
       nodeExecutable: resolveNodeExecutable(),
-      homeDir: join(userData, 'dsh-home'),
-      workspaceDir: join(userData, 'workspace'),
+      homeDir: storage.homeDir,
+      workspaceDir: storage.workspaceDir,
     },
     handleUnexpectedExit,
     desktopLogger,
@@ -81,6 +100,72 @@ async function startDesktop(): Promise<void> {
     desktopLogger.error('desktop', `DSH startup failed: ${errorText(error)}`)
     await showStatus(window, 'DSH 启动失败', message, true)
   }
+}
+
+function configureDesktopStorage(): DesktopStorage {
+  const installedUserData = app.getPath('userData')
+  const installed: DesktopStorage = {
+    homeDir: join(installedUserData, 'dsh-home'),
+    workspaceDir: join(installedUserData, 'workspace'),
+    logPath: null,
+    imported: [],
+    initializationError: null,
+  }
+  const executableDir = dirname(process.execPath)
+  if (!app.isPackaged || !existsSync(join(executableDir, PORTABLE_MARKER))) return installed
+
+  const dataRoot = join(executableDir, 'data')
+  const imported: string[] = []
+  let initializationError: string | null = null
+  try {
+    mkdirSync(dataRoot, { recursive: true })
+    const importMarker = join(dataRoot, PORTABLE_IMPORT_MARKER)
+    if (!existsSync(importMarker)) {
+      for (const directory of ['dsh-home', 'workspace']) {
+        const source = join(installedUserData, directory)
+        const destination = join(dataRoot, directory)
+        if (!existsSync(source) || existsSync(destination)) continue
+        const managedFallback = directory === 'dsh-home'
+          ? join(source, 'profiles', 'node_modules')
+          : undefined
+        copyDirectoryForImport(source, destination, managedFallback)
+        imported.push(directory)
+      }
+      writeFileSync(importMarker, `${new Date().toISOString()}\n`, 'utf8')
+    }
+    const fallbackResetMarker = join(dataRoot, PORTABLE_FALLBACK_RESET_MARKER)
+    if (!existsSync(fallbackResetMarker)) {
+      rmSync(join(dataRoot, 'dsh-home', 'profiles', 'node_modules'), { recursive: true, force: true })
+      writeFileSync(fallbackResetMarker, `${new Date().toISOString()}\n`, 'utf8')
+    }
+    const electronUserData = join(dataRoot, 'electron')
+    mkdirSync(electronUserData, { recursive: true })
+    app.setPath('userData', electronUserData)
+  } catch (error) {
+    initializationError = `无法初始化便携数据目录 ${dataRoot}\n\n${errorText(error)}`
+  }
+
+  return {
+    homeDir: join(dataRoot, 'dsh-home'),
+    workspaceDir: join(dataRoot, 'workspace'),
+    logPath: join(dataRoot, 'logs', 'dsh-desktop.log'),
+    imported,
+    initializationError,
+  }
+}
+
+function copyDirectoryForImport(source: string, destination: string, excludedSource?: string): void {
+  const staging = `${destination}.importing`
+  const excluded = excludedSource === undefined ? undefined : resolve(excludedSource)
+  mkdirSync(staging, { recursive: true })
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    cpSync(join(source, entry.name), join(staging, entry.name), {
+      recursive: true,
+      force: true,
+      filter: currentSource => excluded === undefined || resolve(currentSource) !== excluded,
+    })
+  }
+  renameSync(staging, destination)
 }
 
 function createWindow(): BrowserWindow {
