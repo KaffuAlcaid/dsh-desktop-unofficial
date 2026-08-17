@@ -1,0 +1,730 @@
+diff --git a/packages/client/connection/src/client/fixture.ts b/packages/client/connection/src/client/fixture.ts
+index dd0566486e..f23848d072 100644
+--- a/packages/client/connection/src/client/fixture.ts
++++ b/packages/client/connection/src/client/fixture.ts
+@@ -2727,6 +2727,13 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
+           content: preset.content,
+         })
+       },
++      readPersona: request => ok(request, {
++        agentPreset: request.payload.agentPreset,
++        text: '',
++      }),
++      updatePersona: request => ok(request, {
++        agentPreset: request.payload.agentPreset,
++      }),
+       copy: (request) => {
+         const { from, agentPreset } = request.payload
+         const source = fixturePresets.get(from)
+@@ -3109,6 +3116,8 @@ export class FixtureApiClient extends AbstractApiClient {
+       case 'agentPreset.list': return this.api.agentPresets.list(request)
+       case 'agentPreset.select': return this.api.agentPresets.select(request)
+       case 'agentPreset.read': return this.api.agentPresets.read(request)
++      case 'agentPreset.readPersona': return this.api.agentPresets.readPersona(request)
++      case 'agentPreset.updatePersona': return this.api.agentPresets.updatePersona(request)
+       case 'agentPreset.copy': return this.api.agentPresets.copy(request)
+       case 'agentPreset.openDocument': return this.api.agentPresets.openDocument(request, new AbortController().signal)
+       case 'agentPreset.remove': return this.api.agentPresets.remove(request)
+diff --git a/packages/client/connection/src/index.ts b/packages/client/connection/src/index.ts
+index 35084918e8..9b023797e2 100644
+--- a/packages/client/connection/src/index.ts
++++ b/packages/client/connection/src/index.ts
+@@ -102,6 +102,8 @@ const PRIVILEGED_METHODS = new Set([
+   // any caller that may start a session at all can already run commands as this
+   // process. Pinning the switch would be a fence beside an open gate.
+   'agentPreset.read',
++  'agentPreset.readPersona',
++  'agentPreset.updatePersona',
+   'agentPreset.copy',
+   'agentPreset.openDocument',
+   'agentPreset.remove',
+diff --git a/packages/client/connection/tests/fake-api.client.ts b/packages/client/connection/tests/fake-api.client.ts
+index bee4fc0ce0..724fa3d871 100644
+--- a/packages/client/connection/tests/fake-api.client.ts
++++ b/packages/client/connection/tests/fake-api.client.ts
+@@ -183,6 +183,12 @@ export class FakeApiClient implements IApiClient {
+       this.record('agentPreset.read', payload, Promise.resolve(ok({
+         agentPreset: payload.agentPreset, trust: 'user' as const, content: '',
+       }))),
++    readPersona: (payload: { agentPreset: string }) =>
++      this.record('agentPreset.readPersona', payload, Promise.resolve(ok({
++        agentPreset: payload.agentPreset, text: '',
++      }))),
++    updatePersona: (payload: { agentPreset: string }) =>
++      this.record('agentPreset.updatePersona', payload, Promise.resolve(ok({ agentPreset: payload.agentPreset }))),
+     copy: (payload: { agentPreset: string }) =>
+       this.record('agentPreset.copy', payload, Promise.resolve(ok({ agentPreset: payload.agentPreset }))),
+     openDocument: (payload: { agentPreset: string }) =>
+diff --git a/packages/client/connection/tests/node-half.host.spec.ts b/packages/client/connection/tests/node-half.host.spec.ts
+index 0b30ce6520..c7ee234bb5 100644
+--- a/packages/client/connection/tests/node-half.host.spec.ts
++++ b/packages/client/connection/tests/node-half.host.spec.ts
+@@ -176,7 +176,8 @@ describe('connection node half', () => {
+       // A composition names the plugins a session runs: reading one is
+       // reconnaissance, and copy/remove/openDocument manage the roster and
+       // drive the host desktop.
+-      'agentPreset.read', 'agentPreset.copy', 'agentPreset.openDocument', 'agentPreset.remove',
++      'agentPreset.read', 'agentPreset.readPersona', 'agentPreset.updatePersona',
++      'agentPreset.copy', 'agentPreset.openDocument', 'agentPreset.remove',
+     ]) {
+       const denied = fakeResponse()
+       await routes[0]!.handler(
+@@ -470,7 +471,8 @@ describe('connection node half over a real HTTP server', () => {
+         // Carries a draft credential and turns the host into a fetcher for a
+         // URL the caller picked: an anonymous LAN caller must not reach it.
+         'llm.discoverModels',
+-        'agentPreset.read', 'agentPreset.copy', 'agentPreset.openDocument', 'agentPreset.remove',
++        'agentPreset.read', 'agentPreset.readPersona', 'agentPreset.updatePersona',
++        'agentPreset.copy', 'agentPreset.openDocument', 'agentPreset.remove',
+       ]) {
+         expect([method, await call(port, method, 'harness.example')]).toEqual([method, 403])
+       }
+diff --git a/packages/client/runtime/tests/fake-api.client.ts b/packages/client/runtime/tests/fake-api.client.ts
+index 33a0efbbfd..bfe628d4eb 100644
+--- a/packages/client/runtime/tests/fake-api.client.ts
++++ b/packages/client/runtime/tests/fake-api.client.ts
+@@ -236,6 +236,12 @@ export class FakeApiClient implements IApiClient {
+       this.record('agentPreset.read', payload, Promise.resolve(ok({
+         agentPreset: payload.agentPreset, trust: 'user' as const, content: '',
+       }))),
++    readPersona: (payload: { agentPreset: string }) =>
++      this.record('agentPreset.readPersona', payload, Promise.resolve(ok({
++        agentPreset: payload.agentPreset, text: '',
++      }))),
++    updatePersona: (payload: { agentPreset: string }) =>
++      this.record('agentPreset.updatePersona', payload, Promise.resolve(ok({ agentPreset: payload.agentPreset }))),
+     copy: (payload: { agentPreset: string }) =>
+       this.record('agentPreset.copy', payload, Promise.resolve(ok({ agentPreset: payload.agentPreset }))),
+     openDocument: (payload: { agentPreset: string }) =>
+diff --git a/packages/host/apiproxy/src/api-proxy.ts b/packages/host/apiproxy/src/api-proxy.ts
+index bda99362b6..58fde6fdcd 100644
+--- a/packages/host/apiproxy/src/api-proxy.ts
++++ b/packages/host/apiproxy/src/api-proxy.ts
+@@ -30,7 +30,7 @@ import {
+ // Type-only: brings the `ctx.tools` Context merge into this program (viewFor reads presenters).
+ import {
+   InvalidPresetIdError, PresetExistsError, PresetMountError,
+-  PresetNotWritableError, resolveSessionPreset,
++  PresetNotWritableError, PresetPersonaError, resolveSessionPreset,
+   SETTINGS_NAMESPACE as AGENT_PRESET_SETTINGS_NAMESPACE, UnknownPresetError,
+ } from '@deepseek-ai/dsh-agent-presets'
+ import type { PresetBearingSession } from '@deepseek-ai/dsh-agent-presets'
+@@ -1019,7 +1019,7 @@ function presetError(agentPreset: string, error: unknown): RpcError {
+   if (error instanceof PresetNotWritableError) {
+     return { code: 'agent-preset-read-only', message: error.message, details: { agentPreset, reason: error.message } }
+   }
+-  if (error instanceof InvalidPresetIdError || error instanceof PresetExistsError) {
++  if (error instanceof InvalidPresetIdError || error instanceof PresetExistsError || error instanceof PresetPersonaError) {
+     return { code: 'agent-preset-invalid', message: error.message, details: { agentPreset, reason: error.message } }
+   }
+   return { code: 'internal', message: `agent preset "${agentPreset}": ${String(error)}`, details: {} }
+@@ -3154,6 +3154,32 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
+         }
+       },
+ 
++      async readPersona(request) {
++        const { agentPreset } = request.payload
++        const presets = ctx.get('agentPresets')
++        if (presets === undefined) return err(request, noRoster(agentPreset))
++        try {
++          return ok(request, {
++            agentPreset,
++            text: await presets.readPersona(agentPreset),
++          })
++        } catch (error: unknown) {
++          return err(request, presetError(agentPreset, error))
++        }
++      },
++
++      async updatePersona(request) {
++        const { agentPreset, text } = request.payload
++        const presets = ctx.get('agentPresets')
++        if (presets === undefined) return err(request, noRoster(agentPreset))
++        try {
++          await presets.updatePersona(agentPreset, text)
++          return ok(request, { agentPreset })
++        } catch (error: unknown) {
++          return err(request, presetError(agentPreset, error))
++        }
++      },
++
+       async copy(request) {
+         const { from, agentPreset, name } = request.payload
+         const presets = ctx.get('agentPresets')
+diff --git a/packages/host/apiproxy/src/api/agent-presets.schema.ts b/packages/host/apiproxy/src/api/agent-presets.schema.ts
+index da3da6f9be..ab591880e7 100644
+--- a/packages/host/apiproxy/src/api/agent-presets.schema.ts
++++ b/packages/host/apiproxy/src/api/agent-presets.schema.ts
+@@ -55,6 +55,28 @@ export const agentPresetReadValueSchema = z.object({
+   description: z.string().optional(),
+ }) satisfies z.ZodType<Wire<ResponseValue<'agentPreset.read'>>>
+ 
++/** agentPreset.readPersona request payload. */
++export const agentPresetReadPersonaRequestSchema = z.object({
++  agentPreset: z.string().min(1),
++}) satisfies z.ZodType<Wire<RequestPayload<'agentPreset.readPersona'>>>
++
++/** agentPreset.readPersona response value. */
++export const agentPresetReadPersonaValueSchema = z.object({
++  agentPreset: z.string(),
++  text: z.string(),
++}) satisfies z.ZodType<Wire<ResponseValue<'agentPreset.readPersona'>>>
++
++/** agentPreset.updatePersona request payload. */
++export const agentPresetUpdatePersonaRequestSchema = z.object({
++  agentPreset: z.string().min(1),
++  text: z.string(),
++}) satisfies z.ZodType<Wire<RequestPayload<'agentPreset.updatePersona'>>>
++
++/** agentPreset.updatePersona response value. */
++export const agentPresetUpdatePersonaValueSchema = z.object({
++  agentPreset: z.string(),
++}) satisfies z.ZodType<Wire<ResponseValue<'agentPreset.updatePersona'>>>
++
+ /** agentPreset.copy request payload. */
+ export const agentPresetCopyRequestSchema = z.object({
+   from: z.string().min(1),
+diff --git a/packages/host/apiproxy/src/api/agent-presets.ts b/packages/host/apiproxy/src/api/agent-presets.ts
+index 76f5c05355..94707b60c8 100644
+--- a/packages/host/apiproxy/src/api/agent-presets.ts
++++ b/packages/host/apiproxy/src/api/agent-presets.ts
+@@ -86,6 +86,18 @@ export interface AgentPresetsApi {
+     description?: string
+   }>>
+ 
++  /** Read the config.text value from the preset's one persona row. */
++  readPersona(request: RpcRequest<{ agentPreset: string }>):
++  Promise<RpcResponse<{ agentPreset: string; text: string }>>
++
++  /**
++   * Replace only a locally authored preset's persona config.text value.
++   * Shipped presets and compositions without exactly one persona row are
++   * refused; no arbitrary composition path or YAML text crosses this method.
++   */
++  updatePersona(request: RpcRequest<{ agentPreset: string; text: string }>):
++  Promise<RpcResponse<{ agentPreset: string }>>
++
+   /**
+    * Create a locally authored preset by copying an existing one whole.
+    *
+diff --git a/packages/host/apiproxy/src/api/rpc-map.ts b/packages/host/apiproxy/src/api/rpc-map.ts
+index 80dede1799..0df572b4f0 100644
+--- a/packages/host/apiproxy/src/api/rpc-map.ts
++++ b/packages/host/apiproxy/src/api/rpc-map.ts
+@@ -54,6 +54,8 @@ export interface RpcMethodMap {
+   'agentPreset.list': AgentPresetsApi['list']
+   'agentPreset.select': AgentPresetsApi['select']
+   'agentPreset.read': AgentPresetsApi['read']
++  'agentPreset.readPersona': AgentPresetsApi['readPersona']
++  'agentPreset.updatePersona': AgentPresetsApi['updatePersona']
+   'agentPreset.copy': AgentPresetsApi['copy']
+   'agentPreset.openDocument': AgentPresetsApi['openDocument']
+   'agentPreset.remove': AgentPresetsApi['remove']
+diff --git a/packages/host/apiproxy/src/fetch/client.ts b/packages/host/apiproxy/src/fetch/client.ts
+index 70e3ece58f..687ad63e90 100644
+--- a/packages/host/apiproxy/src/fetch/client.ts
++++ b/packages/host/apiproxy/src/fetch/client.ts
+@@ -43,7 +43,8 @@ import {
+ import { skillListValueSchema } from '../api/skills.schema.ts'
+ import {
+   agentPresetCopyValueSchema, agentPresetListValueSchema, agentPresetOpenDocumentValueSchema,
+-  agentPresetReadValueSchema, agentPresetRemoveValueSchema, agentPresetSelectValueSchema,
++  agentPresetReadPersonaValueSchema, agentPresetReadValueSchema, agentPresetRemoveValueSchema,
++  agentPresetSelectValueSchema, agentPresetUpdatePersonaValueSchema,
+ } from '../api/agent-presets.schema.ts'
+ import {
+   goalCreateValueSchema,
+@@ -128,6 +129,8 @@ export interface IApiClient {
+     list(payload: RequestPayload<'agentPreset.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'agentPreset.list'>>>
+     select(payload: RequestPayload<'agentPreset.select'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'agentPreset.select'>>>
+     read(payload: RequestPayload<'agentPreset.read'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'agentPreset.read'>>>
++    readPersona(payload: RequestPayload<'agentPreset.readPersona'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'agentPreset.readPersona'>>>
++    updatePersona(payload: RequestPayload<'agentPreset.updatePersona'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'agentPreset.updatePersona'>>>
+     copy(payload: RequestPayload<'agentPreset.copy'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'agentPreset.copy'>>>
+     openDocument(payload: RequestPayload<'agentPreset.openDocument'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'agentPreset.openDocument'>>>
+     remove(payload: RequestPayload<'agentPreset.remove'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'agentPreset.remove'>>>
+@@ -202,6 +205,8 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
+   'agentPreset.list': agentPresetListValueSchema,
+   'agentPreset.select': agentPresetSelectValueSchema,
+   'agentPreset.read': agentPresetReadValueSchema,
++  'agentPreset.readPersona': agentPresetReadPersonaValueSchema,
++  'agentPreset.updatePersona': agentPresetUpdatePersonaValueSchema,
+   'agentPreset.copy': agentPresetCopyValueSchema,
+   'agentPreset.openDocument': agentPresetOpenDocumentValueSchema,
+   'agentPreset.remove': agentPresetRemoveValueSchema,
+@@ -466,6 +471,8 @@ export abstract class AbstractApiClient implements IApiClient {
+     list: (payload, signal) => this.callUnary('agentPreset.list', payload, signal),
+     select: (payload, signal) => this.callUnary('agentPreset.select', payload, signal),
+     read: (payload, signal) => this.callUnary('agentPreset.read', payload, signal),
++    readPersona: (payload, signal) => this.callUnary('agentPreset.readPersona', payload, signal),
++    updatePersona: (payload, signal) => this.callUnary('agentPreset.updatePersona', payload, signal),
+     copy: (payload, signal) => this.callUnary('agentPreset.copy', payload, signal),
+     openDocument: (payload, signal) => this.callUnary('agentPreset.openDocument', payload, signal),
+     remove: (payload, signal) => this.callUnary('agentPreset.remove', payload, signal),
+diff --git a/packages/host/apiproxy/src/fetch/handler.ts b/packages/host/apiproxy/src/fetch/handler.ts
+index 697171ec53..4898bb66a0 100644
+--- a/packages/host/apiproxy/src/fetch/handler.ts
++++ b/packages/host/apiproxy/src/fetch/handler.ts
+@@ -46,7 +46,8 @@ import {
+ import { skillListRequestSchema } from '../api/skills.schema.ts'
+ import {
+   agentPresetCopyRequestSchema, agentPresetListRequestSchema, agentPresetOpenDocumentRequestSchema,
+-  agentPresetReadRequestSchema, agentPresetRemoveRequestSchema, agentPresetSelectRequestSchema,
++  agentPresetReadPersonaRequestSchema, agentPresetReadRequestSchema, agentPresetRemoveRequestSchema,
++  agentPresetSelectRequestSchema, agentPresetUpdatePersonaRequestSchema,
+ } from '../api/agent-presets.schema.ts'
+ import {
+   goalCreateRequestSchema,
+@@ -120,6 +121,8 @@ const UNARY_ROUTES: UnaryRoutes = {
+   'agentPreset.list': { schema: agentPresetListRequestSchema, invoke: (api, r) => api.agentPresets.list(r) },
+   'agentPreset.select': { schema: agentPresetSelectRequestSchema, invoke: (api, r) => api.agentPresets.select(r) },
+   'agentPreset.read': { schema: agentPresetReadRequestSchema, invoke: (api, r) => api.agentPresets.read(r) },
++  'agentPreset.readPersona': { schema: agentPresetReadPersonaRequestSchema, invoke: (api, r) => api.agentPresets.readPersona(r) },
++  'agentPreset.updatePersona': { schema: agentPresetUpdatePersonaRequestSchema, invoke: (api, r) => api.agentPresets.updatePersona(r) },
+   'agentPreset.copy': { schema: agentPresetCopyRequestSchema, invoke: (api, r) => api.agentPresets.copy(r) },
+   'agentPreset.openDocument': { schema: agentPresetOpenDocumentRequestSchema, invoke: (api, r, signal) => api.agentPresets.openDocument(r, signal) },
+   'agentPreset.remove': { schema: agentPresetRemoveRequestSchema, invoke: (api, r) => api.agentPresets.remove(r) },
+diff --git a/packages/host/apiproxy/tests/api-proxy-agent-preset.spec.ts b/packages/host/apiproxy/tests/api-proxy-agent-preset.spec.ts
+index 072fd2ab2e..fc7cbf9fe9 100644
+--- a/packages/host/apiproxy/tests/api-proxy-agent-preset.spec.ts
++++ b/packages/host/apiproxy/tests/api-proxy-agent-preset.spec.ts
+@@ -16,7 +16,7 @@ import UserQuestionService from '@deepseek-ai/dsh-user-questions'
+ import { RpcId, type RpcRequest } from '../src/api/rpc.ts'
+ import type { HostFrame } from '../src/api/events.ts'
+ import {
+-  InvalidPresetIdError, PresetExistsError, resolveSessionPreset, UnknownPresetError,
++  InvalidPresetIdError, PresetExistsError, PresetNotWritableError, resolveSessionPreset, UnknownPresetError,
+ } from '@deepseek-ai/dsh-agent-presets'
+ import type {} from '@deepseek-ai/dsh-agent-presets/types'
+ import { GoalId } from '@deepseek-ai/dsh-goal'
+@@ -41,6 +41,7 @@ function stubAgent(session: Session): Agent {
+  */
+ function roster(ids: readonly string[], userIds: readonly string[] = []): unknown {
+   const trustOf = (id: string): 'system' | 'user' => (userIds.includes(id) ? 'user' : 'system')
++  const personas = new Map(ids.map(id => [id, `Persona for ${id}.`]))
+   const presetOf = (id: string): object =>
+     ({ id, trust: trustOf(id), path: `/presets/${id}/agent.cordis.yml` })
+   return {
+@@ -61,6 +62,18 @@ function roster(ids: readonly string[], userIds: readonly string[] = []): unknow
+     },
+     authorable: true,
+     read: (id: string) => Promise.resolve(`# ${id}\n- id: x\n  name: y\n`),
++    readPersona: (id: string) => {
++      if (!ids.includes(id)) return Promise.reject(new UnknownPresetError(id, ids))
++      return Promise.resolve(personas.get(id) ?? '')
++    },
++    updatePersona: (id: string, text: string) => {
++      if (!ids.includes(id)) return Promise.reject(new UnknownPresetError(id, ids))
++      if (trustOf(id) !== 'user') {
++        return Promise.reject(new PresetNotWritableError(id, 'it ships with the deployment'))
++      }
++      personas.set(id, text)
++      return Promise.resolve()
++    },
+     copy: (from: string, id: string) => {
+       if (!ids.includes(from)) return Promise.reject(new UnknownPresetError(from, ids))
+       if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) return Promise.reject(new InvalidPresetIdError(id))
+@@ -492,6 +505,32 @@ describe('authoring over the wire', () => {
+     expect(response.result.value.agentPreset).toBe('mine')
+   })
+ 
++  it('reads and updates only a user preset persona', async () => {
++    const { api } = await harness(['standard', 'mine'], undefined, { userIds: ['mine'] })
++
++    const before = await api.agentPresets.readPersona(request({ agentPreset: 'mine' }))
++    const updated = await api.agentPresets.updatePersona(
++      request({ agentPreset: 'mine', text: 'Use short answers.' }),
++    )
++    const after = await api.agentPresets.readPersona(request({ agentPreset: 'mine' }))
++
++    expect(before.result).toMatchObject({ ok: true, value: { text: 'Persona for mine.' } })
++    expect(updated.result).toMatchObject({ ok: true, value: { agentPreset: 'mine' } })
++    expect(after.result).toMatchObject({ ok: true, value: { text: 'Use short answers.' } })
++  })
++
++  it('maps a shipped persona update to a read-only refusal', async () => {
++    const { api } = await harness(['standard'])
++
++    const response = await api.agentPresets.updatePersona(
++      request({ agentPreset: 'standard', text: 'Changed.' }),
++    )
++
++    expect(response.result.ok).toBe(false)
++    if (response.result.ok) throw new Error('unreachable')
++    expect(response.result.error.code).toBe('agent-preset-read-only')
++  })
++
+   it('rejects a copy target that could escape the preset root', async () => {
+     const { api } = await harness(['standard'])
+ 
+diff --git a/packages/host/apiproxy/tests/client-handler.spec.ts b/packages/host/apiproxy/tests/client-handler.spec.ts
+index 4130d8f210..e3023d7ca4 100644
+--- a/packages/host/apiproxy/tests/client-handler.spec.ts
++++ b/packages/host/apiproxy/tests/client-handler.spec.ts
+@@ -94,6 +94,8 @@ function scriptedApi(overrides: {
+       list: r => ok(r, { presets: [], authorable: false, hasDocument: false }),
+       select: r => ok(r, { agentPreset: r.payload.agentPreset }),
+       read: r => ok(r, { agentPreset: r.payload.agentPreset, trust: 'user' as const, content: '' }),
++      readPersona: r => ok(r, { agentPreset: r.payload.agentPreset, text: '' }),
++      updatePersona: r => ok(r, { agentPreset: r.payload.agentPreset }),
+       copy: r => ok(r, { agentPreset: r.payload.agentPreset }),
+       openDocument: r => ok(r, { opened: true as const }),
+       remove: r => ok(r, {}),
+diff --git a/packages/host/apiproxy/tests/fetch-carrier.spec.ts b/packages/host/apiproxy/tests/fetch-carrier.spec.ts
+index 2000f708ba..3a39bb4337 100644
+--- a/packages/host/apiproxy/tests/fetch-carrier.spec.ts
++++ b/packages/host/apiproxy/tests/fetch-carrier.spec.ts
+@@ -207,6 +207,14 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
+         const value = { agentPreset: request.payload.agentPreset, trust: 'user' as const, content: '' }
+         return Promise.resolve({ rpcId: request.rpcId, result: { ok: true as const, value } })
+       },
++      readPersona(request: RpcRequest<{ agentPreset: string }>) {
++        const value = { agentPreset: request.payload.agentPreset, text: '' }
++        return Promise.resolve({ rpcId: request.rpcId, result: { ok: true as const, value } })
++      },
++      updatePersona(request: RpcRequest<{ agentPreset: string; text: string }>) {
++        const value = { agentPreset: request.payload.agentPreset }
++        return Promise.resolve({ rpcId: request.rpcId, result: { ok: true as const, value } })
++      },
+       copy(request: RpcRequest<{ from: string; agentPreset: string }>) {
+         const value = { agentPreset: request.payload.agentPreset }
+         return Promise.resolve({ rpcId: request.rpcId, result: { ok: true as const, value } })
+diff --git a/packages/host/apiproxy/tests/rpc-schemas.spec.ts b/packages/host/apiproxy/tests/rpc-schemas.spec.ts
+index 66ae52f783..43f2fac27d 100644
+--- a/packages/host/apiproxy/tests/rpc-schemas.spec.ts
++++ b/packages/host/apiproxy/tests/rpc-schemas.spec.ts
+@@ -31,6 +31,7 @@ import {
+ import { skillEntrySchema, skillListRequestSchema, skillListValueSchema } from '../src/api/skills.schema.ts'
+ import {
+   agentPresetEntrySchema, agentPresetListValueSchema, agentPresetOpenDocumentValueSchema,
++  agentPresetReadPersonaValueSchema, agentPresetUpdatePersonaRequestSchema,
+ } from '../src/api/agent-presets.schema.ts'
+ import { hostFrameSchema, muxFrameSchema, askUserQuestionItemSchema } from '../src/api/events.schema.ts'
+ import { approvalRequestIdSchema, approvalResponsePayloadSchema } from '../src/api/approvals.schema.ts'
+@@ -567,4 +568,11 @@ describe('agent-preset schemas', () => {
+     // A closed reply must carry the path the surface shows instead.
+     expect(() => agentPresetOpenDocumentValueSchema.parse({ opened: false })).toThrow()
+   })
++
++  it('accepts persona text, including an intentionally empty prompt', () => {
++    expect(agentPresetReadPersonaValueSchema.parse({ agentPreset: 'mine', text: '' }))
++      .toEqual({ agentPreset: 'mine', text: '' })
++    expect(agentPresetUpdatePersonaRequestSchema.parse({ agentPreset: 'mine', text: 'Be concise.' }))
++      .toEqual({ agentPreset: 'mine', text: 'Be concise.' })
++  })
+ })
+diff --git a/packages/preset/agent-presets/package.json b/packages/preset/agent-presets/package.json
+index 728645d3d2..c1d6d52216 100644
+--- a/packages/preset/agent-presets/package.json
++++ b/packages/preset/agent-presets/package.json
+@@ -51,7 +51,8 @@
+   },
+   "dependencies": {
+     "js-yaml": "^4.1.0",
+-    "@deepseek-ai/schemastery": "workspace:^"
++    "@deepseek-ai/schemastery": "workspace:^",
++    "yaml": "^2.9.0"
+   },
+   "devDependencies": {
+     "@deepseek-ai/cordis-plugin-include": "workspace:^",
+diff --git a/packages/preset/agent-presets/src/authoring.ts b/packages/preset/agent-presets/src/authoring.ts
+index 729e6f68a3..030be37b81 100644
+--- a/packages/preset/agent-presets/src/authoring.ts
++++ b/packages/preset/agent-presets/src/authoring.ts
+@@ -14,11 +14,16 @@
+ 
+ import { chmod, cp, readdir, readFile, rm, stat } from 'node:fs/promises'
+ import { dirname, isAbsolute, join, resolve } from 'node:path'
++import { load } from 'js-yaml'
++import { isMap, isScalar, isSeq, parseDocument, Scalar, stringify } from 'yaml'
++import { entryListSchema } from '@deepseek-ai/cordis-plugin-include'
+ import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+ import { expandHomePath } from '@deepseek-ai/dsh-home-paths'
+ import { METADATA_FILE, renderPresetMetadata } from './metadata.ts'
+ import { PRESET_ID, type AgentPreset, type PresetRoot } from './preset.ts'
+ 
++const PERSONA_PLUGIN = '@deepseek-ai/dsh-persona'
++
+ /** A preset id that cannot be used as a directory name under a root. */
+ export class InvalidPresetIdError extends Error {
+   constructor(
+@@ -56,6 +61,17 @@ export class PresetNotWritableError extends Error {
+   }
+ }
+ 
++/** A preset whose composition has no unambiguous persona text field. */
++export class PresetPersonaError extends Error {
++  constructor(
++    /** The preset whose persona could not be addressed. */
++    readonly presetId: string,
++    reason: string,
++  ) {
++    super(`agent-presets: preset "${presetId}" persona cannot be edited: ${reason}`)
++  }
++}
++
+ /**
+  * The root locally authored presets are written to.
+  * @param roots - the configured roots in precedence order.
+@@ -79,6 +95,118 @@ export async function readComposition(preset: AgentPreset): Promise<string> {
+   return await readFile(preset.path, 'utf8')
+ }
+ 
++/**
++ * Find the one persona text scalar without normalizing the surrounding YAML.
++ * Group rows recurse through their entry lists because a valid preset may put
++ * the persona inside an isolated realm.
++ */
++function personaTextNode(content: string, presetId: string): Scalar<string> {
++  const document = parseDocument(content, { prettyErrors: false, uniqueKeys: true })
++  if (document.errors.length > 0) {
++    throw new PresetPersonaError(
++      presetId,
++      `the composition is invalid YAML (${document.errors.map(error => error.code).join(', ')})`,
++    )
++  }
++
++  const found: Scalar<string>[] = []
++  const visit = (rows: unknown): void => {
++    if (!isSeq(rows)) return
++    for (const row of rows.items) {
++      if (!isMap(row)) continue
++      if (row.get('name') === PERSONA_PLUGIN) {
++        const config = row.get('config', true)
++        const text = isMap(config) ? config.get('text', true) : undefined
++        if (!isScalar(text) || typeof text.value !== 'string' || text.range === undefined) {
++          throw new PresetPersonaError(
++            presetId,
++            `the ${PERSONA_PLUGIN} row must carry a string config.text`,
++          )
++        }
++        found.push(text as Scalar<string>)
++      }
++      if (row.get('group') === true) visit(row.get('config', true))
++    }
++  }
++  visit(document.contents)
++
++  if (found.length === 0) {
++    throw new PresetPersonaError(presetId, `no ${PERSONA_PLUGIN} row was found`)
++  }
++  if (found.length > 1) {
++    throw new PresetPersonaError(presetId, `found ${String(found.length)} ${PERSONA_PLUGIN} rows`)
++  }
++  return found[0]!
++}
++
++/** Render a scalar fragment at the indentation of its existing mapping key. */
++function renderPersonaScalar(content: string, node: Scalar<string>, text: string, presetId: string): string {
++  const rendered = stringify({ value: text }, { lineWidth: 0 }).trimEnd()
++  const marker = 'value: '
++  if (!rendered.startsWith(marker)) {
++    throw new Error('agent-presets: failed to render persona text as a YAML scalar')
++  }
++  const start = node.range![0]
++  const valueEnd = node.range![1]
++  const lineStart = content.lastIndexOf('\n', start - 1) + 1
++  const indentation = content.slice(lineStart, start).match(/^[\t ]*/)?.[0] ?? ''
++  const newline = content.includes('\r\n') ? '\r\n' : '\n'
++  const scalar = rendered.slice(marker.length).split('\n').join(`${newline}${indentation}`)
++  const suffix = content.slice(valueEnd)
++  const blockScalar = node.type === Scalar.BLOCK_FOLDED || node.type === Scalar.BLOCK_LITERAL
++  const separator = blockScalar && suffix.length > 0 && !suffix.startsWith('\r\n') && !suffix.startsWith('\n')
++    ? newline
++    : ''
++  const updated = `${content.slice(0, start)}${scalar}${separator}${suffix}`
++
++  // The AST parser above is only an address finder. The loader's own schema is
++  // authoritative for Harness YAML, including its !!js values elsewhere in
++  // the composition, so the exact text about to be written is checked here.
++  let rows: unknown
++  try {
++    rows = load(updated, { schema: entryListSchema })
++  } catch {
++    throw new PresetPersonaError(presetId, 'the updated text does not form a valid Harness composition')
++  }
++  if (!Array.isArray(rows)) {
++    throw new PresetPersonaError(presetId, 'the updated composition is not a top-level plugin list')
++  }
++  return updated
++}
++
++/**
++ * Read the system prompt from one preset's persona row.
++ * @param preset - the resolved built-in or user preset.
++ * @returns the persona's config.text value.
++ */
++export async function readPersona(preset: AgentPreset): Promise<string> {
++  const content = await readComposition(preset)
++  return personaTextNode(content, preset.id).value
++}
++
++/**
++ * Replace only a user preset's persona config.text scalar.
++ * @param roots - configured roots, used to confirm writable ownership.
++ * @param preset - the resolved preset to update.
++ * @param text - complete replacement system prompt.
++ */
++export async function updatePersona(
++  roots: readonly PresetRoot[],
++  preset: AgentPreset,
++  text: string,
++): Promise<void> {
++  if (preset.trust !== 'user') {
++    throw new PresetNotWritableError(preset.id, 'it ships with the deployment')
++  }
++  const dir = join(writableRoot(roots), preset.id)
++  if (!isAbsolute(preset.path) || dirname(preset.path) !== dir) {
++    throw new PresetNotWritableError(preset.id, 'it does not live under the writable preset root')
++  }
++  const content = await readComposition(preset)
++  const updated = renderPersonaScalar(content, personaTextNode(content, preset.id), text, preset.id)
++  await writeFileAtomic(preset.path, updated, { mode: 0o600, dirMode: 0o700 })
++}
++
+ /** Whether anything occupies the path (cp's own errorOnExist backstops races). */
+ async function occupied(path: string): Promise<boolean> {
+   let present = true
+diff --git a/packages/preset/agent-presets/src/index.ts b/packages/preset/agent-presets/src/index.ts
+index 6a24a89d76..2927421856 100644
+--- a/packages/preset/agent-presets/src/index.ts
++++ b/packages/preset/agent-presets/src/index.ts
+@@ -30,7 +30,7 @@ import type {} from '@deepseek-ai/dsh-agent'
+ import { settingsNamespace, type SettingsScope, type default as SettingsService } from '@deepseek-ai/dsh-settings'
+ import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
+ import { discoverPresets, USER_PRESET_DIR } from './discovery.ts'
+-import { copyComposition, deleteComposition, readComposition } from './authoring.ts'
++import { copyComposition, deleteComposition, readComposition, readPersona, updatePersona } from './authoring.ts'
+ import { mountPreset, serviceForAgent, standingMountFor } from './mount.ts'
+ import { PresetExistsError } from './authoring.ts'
+ import { PresetMountError, UnknownPresetError, type AgentPreset, type Config, type PresetRoot } from './preset.ts'
+@@ -60,7 +60,7 @@ export {
+ } from './mount.ts'
+ export {
+   copyComposition, deleteComposition, InvalidPresetIdError, PresetExistsError,
+-  PresetNotWritableError, readComposition, writableRoot,
++  PresetNotWritableError, PresetPersonaError, readComposition, readPersona, updatePersona, writableRoot,
+ } from './authoring.ts'
+ export { resolveSessionPreset, type PresetBearingSession } from './session.ts'
+ export { PresetMountError, UnknownPresetError } from './preset.ts'
+@@ -362,6 +362,27 @@ export class AgentPresets extends Service {
+     return await readComposition(await this.resolve(id))
+   }
+ 
++  /**
++   * Read one preset's persona system prompt.
++   * @param id - the preset id.
++   * @returns the persona config.text value.
++   */
++  async readPersona(id: string): Promise<string> {
++    return await readPersona(await this.resolve(id))
++  }
++
++  /**
++   * Replace only a locally authored preset's persona system prompt.
++   * Existing sessions keep their mounted generation; later sessions observe
++   * the changed file through the normal standing-mount refresh path.
++   * @param id - the user preset id.
++   * @param text - complete replacement system prompt.
++   */
++  async updatePersona(id: string, text: string): Promise<void> {
++    await updatePersona(this.resolvedRoots, await this.resolve(id), text)
++    this.standing.delete(id)
++  }
++
+   /**
+    * Create a locally authored preset by copying an existing one whole.
+    *
+diff --git a/packages/preset/agent-presets/tests/authoring.spec.ts b/packages/preset/agent-presets/tests/authoring.spec.ts
+index 8086996111..974fb57562 100644
+--- a/packages/preset/agent-presets/tests/authoring.spec.ts
++++ b/packages/preset/agent-presets/tests/authoring.spec.ts
+@@ -169,6 +169,74 @@ describe('copying a preset', () => {
+   })
+ })
+ 
++describe('persona system-prompt authoring', () => {
++  it('replaces only persona config.text and preserves the surrounding Harness YAML', async () => {
++    const composition = [
++      '# keep this comment',
++      '- id: persona',
++      "  name: '@deepseek-ai/dsh-persona'",
++      '  config:',
++      '    text: >-',
++      '      Original prompt.',
++      '    complete: false',
++      '    includeRuntimeContext: true',
++      '- id: conditional-tool',
++      '  name: ../../plugins/contribute.js',
++      "  disabled: !!js process.platform === 'win32'",
++      '',
++    ].join('\r\n')
++    await seedPreset(userRoot, 'mine', { composition })
++
++    expect(await ctx.agentPresets.readPersona('mine')).toBe('Original prompt.')
++    await ctx.agentPresets.updatePersona('mine', 'First line.\n\nSecond line with: punctuation.')
++
++    expect(await ctx.agentPresets.readPersona('mine')).toBe('First line.\n\nSecond line with: punctuation.')
++    const updated = await readFile(join(userRoot, 'mine', COMPOSITION_FILE), 'utf8')
++    expect(updated).toContain('# keep this comment\r\n')
++    expect(updated).toContain('    complete: false\r\n')
++    expect(updated).toContain('    includeRuntimeContext: true\r\n')
++    expect(updated).toContain("  disabled: !!js process.platform === 'win32'\r\n")
++    expect(updated.replaceAll('\r\n', '')).not.toContain('\n')
++    expect((await ctx.agentPresets.list()).find(preset => preset.id === 'mine')?.broken).toBeUndefined()
++  })
++
++  it('reads a shipped persona but refuses to rewrite the shipped install', async () => {
++    const systemRoot = await mkdtemp(join(tmpdir(), 'dsh-preset-persona-system-'))
++    await seedPreset(systemRoot, 'shipped', {
++      composition: "- id: persona\n  name: '@deepseek-ai/dsh-persona'\n  config:\n    text: Built in.\n",
++    })
++    const readOnly = new Context()
++    readOnly.baseUrl = pathToFileURL(FIXTURES).href + '/'
++    await readOnly.plugin(Loader)
++    readOnly.loader.builtins.include = Include
++    await readOnly.plugin(AgentPresets, {
++      default: 'shipped',
++      roots: [{ path: systemRoot, trust: 'system' as const }],
++      includeUserRoot: false,
++    })
++
++    expect(await readOnly.agentPresets.readPersona('shipped')).toBe('Built in.')
++    await expect(readOnly.agentPresets.updatePersona('shipped', 'Changed.'))
++      .rejects.toThrow(/ships with the deployment/)
++  })
++
++  it('fails clearly when the persona row is missing or ambiguous', async () => {
++    await seedPreset(userRoot, 'missing')
++    await seedPreset(userRoot, 'duplicate', {
++      composition: [
++        "- name: '@deepseek-ai/dsh-persona'",
++        '  config: { text: one }',
++        "- name: '@deepseek-ai/dsh-persona'",
++        '  config: { text: two }',
++        '',
++      ].join('\n'),
++    })
++
++    await expect(ctx.agentPresets.readPersona('missing')).rejects.toThrow(/no @deepseek-ai\/dsh-persona row/)
++    await expect(ctx.agentPresets.updatePersona('duplicate', 'Changed.')).rejects.toThrow(/found 2/)
++  })
++})
++
+ describe('deleting a preset', () => {
+   it('removes a locally authored one', async () => {
+     await ctx.agentPresets.copy('standard', 'mine')
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 1490a0f9f7..218acf6972 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -5558,6 +5558,9 @@ importers:
+       js-yaml:
+         specifier: ^4.1.0
+         version: 4.2.0
++      yaml:
++        specifier: ^2.9.0
++        version: 2.9.0
+     devDependencies:
+       '@deepseek-ai/cordis':
+         specifier: workspace:^

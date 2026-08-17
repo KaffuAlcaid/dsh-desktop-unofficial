@@ -1,0 +1,126 @@
+.createButton {
+  box-sizing: border-box;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.createButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.createButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.iconButton {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+}
+
+.iconButton:focus-visible,
+.createButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -1px;
+}
+
+.dialog {
+  width: min(680px, 100%);
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.field input,
+.field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.field input {
+  min-height: 38px;
+  padding: 8px 10px;
+}
+
+.field textarea {
+  min-height: min(42vh, 340px);
+  padding: 10px 12px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.field input:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.field input:disabled,
+.field textarea:disabled {
+  opacity: 0.6;
+}
+
+.error,
+.loading {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.error {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.loading {
+  color: var(--dsw-alias-label-secondary);
+}
+
+@media (max-width: 520px) {
+  .field textarea {
+    min-height: 36vh;
+  }
+}

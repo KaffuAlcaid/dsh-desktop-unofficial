@@ -1,0 +1,291 @@
+diff --git a/packages/bundle/web-app/cordis.patch.yml b/packages/bundle/web-app/cordis.patch.yml
+index a33bbcce2a..2f2f75a465 100644
+--- a/packages/bundle/web-app/cordis.patch.yml
++++ b/packages/bundle/web-app/cordis.patch.yml
+@@ -267,6 +267,9 @@
+     - id: ui-agent-preset
+       name: '@deepseek-ai/dsh-client-ui-agent-preset'
+ 
++    - id: dsh-uo-system-prompt
++      name: '@dsh-uo/client-ui-system-prompt'
++
+     # Plugin configuration: the host-plane sections a user owns, as expandable
+     # cards. A namespace this deployment does not expose renders nothing.
+     - id: ui-settings-plugins
+diff --git a/packages/bundle/web-app/package.json b/packages/bundle/web-app/package.json
+index 18dfa9931e..f74968f7eb 100644
+--- a/packages/bundle/web-app/package.json
++++ b/packages/bundle/web-app/package.json
+@@ -46,6 +46,7 @@
+   "dependencies": {
+     "@dsh-uo/client-ui-model-input": "workspace:^",
+     "@dsh-uo/client-ui-reasoning-effort": "workspace:^",
++    "@dsh-uo/client-ui-system-prompt": "workspace:^",
+     "@dsh-uo/client-ui-upstream-status": "workspace:^",
+     "@deepseek-ai/dsh-agent-presets": "workspace:^",
+     "@deepseek-ai/dsh-api-remotes": "workspace:^",
+diff --git a/packages/client/ui-agent-preset/src/client/AgentPresetSection.tsx b/packages/client/ui-agent-preset/src/client/AgentPresetSection.tsx
+index cac8452f00..94b0556446 100644
+--- a/packages/client/ui-agent-preset/src/client/AgentPresetSection.tsx
++++ b/packages/client/ui-agent-preset/src/client/AgentPresetSection.tsx
+@@ -16,7 +16,7 @@ import {
+   Button, IconBrowseOutline16, IconCopyOutline16, IconFolderOpenOutline16, IconPlusOutline16, IconTrashOutline16, Modal, Tooltip,
+ } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+-import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
++import type { InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+ import { draftBlocker, type AgentPresetSectionState } from './section-store.ts'
+ import { presetDisplayText, type AgentPresetSettingsKey } from './locales.ts'
+ import css from './AgentPresetSection.module.css'
+@@ -29,6 +29,8 @@ export interface AgentPresetSectionInjected {
+   }
+   /** Read the roster; called once when the section first renders. */
+   load: () => Promise<void>
++  /** Reload this roster and every other mounted preset picker. */
++  refreshRoster: () => Promise<void>
+   /** Open one shipped preset's composition in the read-only viewer. */
+   view: (id: string) => Promise<void>
+   /** Close the read-only viewer. */
+@@ -62,6 +64,7 @@ export interface AgentPresetSectionInjected {
+ /** Full component props. */
+ export type AgentPresetSectionProps =
+   PropsRuntime<'settings.section'>
++  & PropsRenderSlots<'settings.agentPreset.create' | 'settings.agentPreset.user.action'>
+   & PropsLocale<'settings.agentPreset'>
+   & InjectFace<AgentPresetSectionInjected>
+ 
+@@ -227,6 +230,11 @@ export function AgentPresetSection(props: AgentPresetSectionProps): ReactNode {
+       </button>
+     )
+     : null
++  const createEntry = props.renderSlot('settings.agentPreset.create', {
++    authorable: state.authorable,
++    presetIds: state.rows.map(row => row.id),
++    refresh: props.refreshRoster,
++  })
+ 
+   return (
+     <div className={css.section}>
+@@ -239,8 +247,9 @@ export function AgentPresetSection(props: AgentPresetSectionProps): ReactNode {
+           .map(row => ({ row, text: presetDisplayText(row, t) }))
+         // The custom group is where a preset of one's own will appear, so it
+         // stays on screen even while empty: heading plus the creator entry.
++        const extension = trust === 'user' ? createEntry : null
+         const tail = trust === 'user' ? creatorButton : null
+-        if (group.length === 0 && tail === null) return null
++        if (group.length === 0 && tail === null && extension === null) return null
+         return (
+           <section key={trust} className={css.group}>
+             <h3 className={css.groupHead}>{heading}</h3>
+@@ -287,6 +296,12 @@ export function AgentPresetSection(props: AgentPresetSectionProps): ReactNode {
+                       <code className={css.cardId}>{row.id}</code>
+                     </button>
+                     <div className={css.cardFoot}>
++                      {row.trust === 'user'
++                        ? props.renderSlot('settings.agentPreset.user.action', {
++                          agentPreset: row.id,
++                          title: text.name,
++                        })
++                        : null}
+                       {/* Shipped presets are the compositions a copy starts
+                         from, so READING one is the point; a custom preset is
+                         edited in its files instead, which the location action
+@@ -357,6 +372,7 @@ export function AgentPresetSection(props: AgentPresetSectionProps): ReactNode {
+                 ))}
+               </ul>
+             )}
++            {extension}
+             {tail}
+           </section>
+         )
+diff --git a/packages/client/ui-agent-preset/src/client/index.ts b/packages/client/ui-agent-preset/src/client/index.ts
+index f327479660..eb59640d4e 100644
+--- a/packages/client/ui-agent-preset/src/client/index.ts
++++ b/packages/client/ui-agent-preset/src/client/index.ts
+@@ -34,6 +34,46 @@ import { AgentPresetSectionController } from './section-store.ts'
+ import { en, zh } from './locales.ts'
+ import { AGENT_PRESET_SETTINGS_NS, AgentPresetSettingsController } from './settings-store.ts'
+ 
++/** Owner data for an optional custom-preset creation control. */
++export interface AgentPresetCreateOwnerProps {
++  /** Whether this deployment has a writable user preset root. */
++  readonly authorable: boolean
++  /** Current ids, for immediate duplicate-name feedback. */
++  readonly presetIds: readonly string[]
++  /** Reload the roster after an external authoring action. */
++  refresh: () => Promise<void>
++}
++
++/** Owner data for an optional action on one user preset card. */
++export interface AgentPresetUserActionOwnerProps {
++  /** Stable preset id sent to Host authoring methods. */
++  readonly agentPreset: string
++  /** Display name used by accessible labels and dialog headings. */
++  readonly title: string
++}
++
++declare module '@deepseek-ai/dsh-client-ui-slots' {
++  interface SlotMap {
++    /** Optional custom-preset creation entry above the Creator-mode action. */
++    'settings.agentPreset.create': {
++      kind: 'single'
++      scope: 'root'
++      owner: AgentPresetCreateOwnerProps
++    }
++    /** Optional action entries in the footer of each user preset card. */
++    'settings.agentPreset.user.action': {
++      kind: 'list'
++      scope: 'root'
++      owner: AgentPresetUserActionOwnerProps
++    }
++  }
++}
++
++const AGENT_PRESET_CHILDREN = {
++  'settings.agentPreset.create': { kind: 'single', scope: 'root' },
++  'settings.agentPreset.user.action': { kind: 'list', scope: 'root' },
++} as const
++
+ export type { AgentPresetLabelInjected, AgentPresetLabelProps } from './AgentPresetLabel.tsx'
+ export type { AgentPresetRowInjected, AgentPresetRowProps } from './AgentPresetRow.tsx'
+ export type { AgentPresetSeatInjected, AgentPresetSeatProps } from './AgentPresetSeat.tsx'
+@@ -190,6 +230,11 @@ export function apply(ctx: ClientContext): void {
+   const sectionInjected = (): AgentPresetSectionInjected => ({
+     hooks: { agentPresetSection: section.store },
+     load: () => section.load(),
++    refreshRoster: async () => {
++      await section.load()
++      void controller.load()
++      for (const read of rosterReaders) read()
++    },
+     view: (id: string) => section.view(id),
+     closeView: () => { section.closeView() },
+     beginCopy: (from: string) => { section.beginCopy(from) },
+@@ -220,5 +265,6 @@ export function apply(ctx: ClientContext): void {
+     label: () => ctx.locale.bind('settings.agentPreset')('nav'),
+     locale: 'settings.agentPreset',
+     inject: sectionInjected,
++    children: AGENT_PRESET_CHILDREN,
+   }, AgentPresetSection))
+ }
+diff --git a/packages/client/ui-agent-preset/tests/apply.client.spec.ts b/packages/client/ui-agent-preset/tests/apply.client.spec.ts
+index 7ff4741648..d18b1f439d 100644
+--- a/packages/client/ui-agent-preset/tests/apply.client.spec.ts
++++ b/packages/client/ui-agent-preset/tests/apply.client.spec.ts
+@@ -193,6 +193,10 @@ describe('ui-agent-preset apply', () => {
+     const section = slots.entries('settings.section')[0]!
+     expect(section.component).toBe(AgentPresetSection)
+     expect(section.options).toMatchObject({ id: 'agent-presets', order: 20 })
++    expect(section.children).toEqual({
++      'settings.agentPreset.create': { kind: 'single', scope: 'root' },
++      'settings.agentPreset.user.action': { kind: 'list', scope: 'root' },
++    })
+     // The nav label is a locale-following thunk; owners resolve it at read time.
+     expect(resolveSlotLabel(section.options.label)).toBe('Agent 预设')
+   })
+diff --git a/packages/client/ui-agent-preset/tests/section.client.spec.tsx b/packages/client/ui-agent-preset/tests/section.client.spec.tsx
+index 6cf819b2bd..2a9ed1fce3 100644
+--- a/packages/client/ui-agent-preset/tests/section.client.spec.tsx
++++ b/packages/client/ui-agent-preset/tests/section.client.spec.tsx
+@@ -45,6 +45,7 @@ function renderSection(
+   const store = createSnapshotStore<AgentPresetSectionState>({ ...READY, ...state })
+   const actions = {
+     load: vi.fn(() => Promise.resolve()),
++    refreshRoster: vi.fn(() => Promise.resolve()),
+     // The shell-owned section affordance (SettingsSectionOwnerProps.close).
+     close: vi.fn(),
+     ...options.creator === false ? {} : { startCreatorDraft: vi.fn() },
+@@ -63,6 +64,7 @@ function renderSection(
+   const props = {
+     ...actions,
+     useAgentPresetSection: bindSnapshotSelector(store),
++    renderSlot: vi.fn(() => null),
+     t: (key: keyof typeof en) => en[key],
+   } as unknown as AgentPresetSectionProps
+   render(<AgentPresetSection {...props} />)
+@@ -301,6 +303,7 @@ describe('the preset list', () => {
+         createSnapshotStore<AgentPresetSectionState>({ ...READY, status: 'unavailable', rows: [] })),
+       t: (key: keyof typeof en) => en[key],
+       load: vi.fn(() => Promise.resolve()),
++      renderSlot: vi.fn(() => null),
+     } as unknown as AgentPresetSectionProps)} />)
+ 
+     expect(container.firstChild).toBeNull()
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 14ccf25b35..56a44623a7 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -1264,6 +1264,9 @@ importers:
+       '@dsh-uo/client-ui-reasoning-effort':
+         specifier: workspace:^
+         version: link:../../client/ui-dsh-uo-reasoning-effort
++      '@dsh-uo/client-ui-system-prompt':
++        specifier: workspace:^
++        version: link:../../client/ui-dsh-uo-system-prompt
+       '@dsh-uo/client-ui-upstream-status':
+         specifier: workspace:^
+         version: link:../../client/ui-dsh-uo-upstream-status
+@@ -2074,6 +2077,51 @@ importers:
+         specifier: ^18.2.0
+         version: 18.3.1(react@18.3.1)
+ 
++  packages/client/ui-dsh-uo-system-prompt:
++    devDependencies:
++      '@deepseek-ai/cordis':
++        specifier: workspace:^
++        version: link:../../../vendor/cordis
++      '@deepseek-ai/dsh-api-remotes':
++        specifier: workspace:^
++        version: link:../../api/remotes
++      '@deepseek-ai/dsh-client-connection':
++        specifier: workspace:^
++        version: link:../connection
++      '@deepseek-ai/dsh-client-locale':
++        specifier: workspace:^
++        version: link:../locale
++      '@deepseek-ai/dsh-client-runtime':
++        specifier: workspace:^
++        version: link:../runtime
++      '@deepseek-ai/dsh-client-test-runtime':
++        specifier: workspace:^
++        version: link:../../test-support/client-runtime
++      '@deepseek-ai/dsh-client-ui-agent-preset':
++        specifier: workspace:^
++        version: link:../ui-agent-preset
++      '@deepseek-ai/dsh-client-ui-primitives':
++        specifier: workspace:^
++        version: link:../ui-primitives
++      '@deepseek-ai/dsh-client-ui-slots':
++        specifier: workspace:^
++        version: link:../ui-slots
++      '@deepseek-ai/dsh-invariants':
++        specifier: workspace:^
++        version: link:../../runtime-diagnostics/invariants
++      '@testing-library/react':
++        specifier: ^16.1.0
++        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
++      '@types/react':
++        specifier: ~18.3.1
++        version: 18.3.31
++      react:
++        specifier: ^18.2.0
++        version: 18.3.1
++      react-dom:
++        specifier: ^18.2.0
++        version: 18.3.1(react@18.3.1)
++
+   packages/client/ui-dsh-uo-upstream-status:
+     devDependencies:
+       '@deepseek-ai/cordis':
+diff --git a/tsconfig.client.json b/tsconfig.client.json
+index c066e4dfad..0bf6598296 100644
+--- a/tsconfig.client.json
++++ b/tsconfig.client.json
+@@ -81,6 +81,7 @@
+     { "path": "./packages/client/ui-message-feedback" },
+     { "path": "./packages/client/ui-model-selection" },
+     { "path": "./packages/client/ui-agent-preset" },
++    { "path": "./packages/client/ui-dsh-uo-system-prompt" },
+     { "path": "./packages/client/ui-permission-presets" },
+     { "path": "./packages/client/ui-plan" },
+     { "path": "./packages/client/ui-settings-plugins" },

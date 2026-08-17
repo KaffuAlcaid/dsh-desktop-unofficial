@@ -1,0 +1,56 @@
+/** Simplified Chinese dictionary. */
+export const zh = {
+  create: '新建系统提示词预设',
+  createTitle: '新建系统提示词预设',
+  edit: '编辑系统提示词',
+  editTitle: '编辑系统提示词',
+  identifier: '标识符',
+  identifierPlaceholder: 'my-agent',
+  name: '名称',
+  namePlaceholder: '选择器中显示的名称',
+  prompt: '系统提示词',
+  promptPlaceholder: '输入该 Agent 的系统提示词',
+  cancel: '取消',
+  close: '关闭',
+  save: '保存',
+  saving: '正在保存…',
+  loading: '正在读取…',
+  idRequired: '请填写标识符。',
+  idInvalid: '只能使用小写字母、数字与连字符，且以字母或数字开头。',
+  idTaken: '该标识符已被占用。',
+  copyFailed: '预设创建失败。',
+  loadFailed: '系统提示词读取失败。',
+  saveFailed: '系统提示词保存失败。',
+  createdButPromptFailed: '预设已保留，但系统提示词未保存。请从新预设卡片的铅笔按钮重新编辑。',
+  unavailable: '此部署未配置可写的预设目录',
+} satisfies Record<string, string>
+
+/** System-prompt locale key union. */
+export type SystemPromptKey = keyof typeof zh
+
+/** English dictionary. */
+export const en = {
+  create: 'Create system-prompt preset',
+  createTitle: 'Create system-prompt preset',
+  edit: 'Edit system prompt',
+  editTitle: 'Edit system prompt',
+  identifier: 'Identifier',
+  identifierPlaceholder: 'my-agent',
+  name: 'Name',
+  namePlaceholder: 'Name shown in the preset picker',
+  prompt: 'System prompt',
+  promptPlaceholder: 'Enter this agent\'s system prompt',
+  cancel: 'Cancel',
+  close: 'Close',
+  save: 'Save',
+  saving: 'Saving…',
+  loading: 'Loading…',
+  idRequired: 'Give the preset an identifier.',
+  idInvalid: 'Use lowercase letters, digits, and hyphens, starting with a letter or digit.',
+  idTaken: 'A preset with this identifier already exists.',
+  copyFailed: 'Could not create the preset.',
+  loadFailed: 'Could not read the system prompt.',
+  saveFailed: 'Could not save the system prompt.',
+  createdButPromptFailed: 'The preset was kept, but its system prompt was not saved. Edit it again from the pencil button on the new preset card.',
+  unavailable: 'This deployment has no writable preset directory',
+} satisfies Record<SystemPromptKey, string>

@@ -16,13 +16,16 @@ $manifestPath = Join-Path $projectRoot 'upstream\harness.json'
 $pluginSources = @(
   (Join-Path $projectRoot 'harness-overrides\packages\client\ui-dsh-uo-upstream-status'),
   (Join-Path $projectRoot 'harness-overrides\packages\client\ui-dsh-uo-reasoning-effort'),
-  (Join-Path $projectRoot 'harness-overrides\packages\client\ui-dsh-uo-model-input')
+  (Join-Path $projectRoot 'harness-overrides\packages\client\ui-dsh-uo-model-input'),
+  (Join-Path $projectRoot 'harness-overrides\packages\client\ui-dsh-uo-system-prompt')
 )
 $patchPaths = @(
   (Join-Path $projectRoot 'harness-overrides\patches\0001-dsh-uo-upstream-status.patch'),
   (Join-Path $projectRoot 'harness-overrides\patches\0002-dsh-uo-reasoning-effort.patch'),
   (Join-Path $projectRoot 'harness-overrides\patches\0003-dsh-uo-model-input.patch'),
-  (Join-Path $projectRoot 'harness-overrides\patches\0004-pi-ai-developer-role.patch')
+  (Join-Path $projectRoot 'harness-overrides\patches\0004-pi-ai-developer-role.patch'),
+  (Join-Path $projectRoot 'harness-overrides\patches\0005-agent-preset-persona-api.patch'),
+  (Join-Path $projectRoot 'harness-overrides\patches\0006-dsh-uo-system-prompt-editor.patch')
 )
 
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {

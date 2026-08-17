@@ -1,0 +1,36 @@
+{
+  "extends": "../../../tsconfig.base.client.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types"
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../../runtime-diagnostics/invariants"
+    },
+    {
+      "path": "../../api/remotes/tsconfig.client.json"
+    },
+    {
+      "path": "../connection/tsconfig.client.json"
+    },
+    {
+      "path": "../locale"
+    },
+    {
+      "path": "../runtime"
+    },
+    {
+      "path": "../ui-agent-preset"
+    },
+    {
+      "path": "../ui-primitives"
+    },
+    {
+      "path": "../ui-slots"
+    }
+  ]
+}
