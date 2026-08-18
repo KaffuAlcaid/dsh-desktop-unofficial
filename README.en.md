@@ -10,7 +10,7 @@ English | [简体中文](README.md)
 
 DSH UO is an unofficial desktop distribution of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). Release packages bundle the Harness Web UI, a pinned Harness source revision, and the Node.js runtime so that the application can be used as an installed desktop program.
 
-DSH UO also adds interfaces for model input capabilities, reasoning effort, system-prompt editing, and Harness upstream status. DSH UO is an early preview, and the upstream Harness project is in developer preview. Future versions may contain breaking changes. This project is independently maintained and is not an official DeepSeek desktop client.
+DSH UO also adds interfaces for application updates, user plugin management, model input capabilities, reasoning effort, system-prompt editing, and Harness upstream status. DSH UO is an early preview, and the upstream Harness project is in developer preview. Future versions may contain breaking changes. This project is independently maintained and is not an official DeepSeek desktop client.
 
 ## Screenshots
 
@@ -35,6 +35,8 @@ Most users should download a package from [GitHub Releases](https://github.com/K
 | Linux x64 | `DSH-UO-<version>-linux-x86_64.AppImage` | Recommended Linux package |
 | Linux x64 | `DSH-UO-<version>-linux-x64.zip` | Extracted application directory |
 
+The `.blockmap` and `latest.yml` assets are metadata used by NSIS application updates and do not need to be downloaded manually.
+
 GitHub Releases may be slow or inaccessible on some networks in mainland China. The project currently has no official domestic mirror or alternative download site, so GitHub Releases is the only official publication source. Do not download the application from an unknown file-sharing site, proxy, or repackaging page.
 
 No macOS, ARM64, `.deb`, or `.rpm` package is currently published.
@@ -43,7 +45,7 @@ No macOS, ARM64, `.deb`, or `.rpm` package is currently published.
 
 For the installer, run `DSH-UO-Setup-<version>-x64.exe`, approve the administrator prompt, and choose the installation directory. After installation, start DSH UO from its desktop or Start menu shortcut.
 
-For the ZIP package, fully extract the archive to a normal directory and run `DSH-Desktop-Unofficial.exe` from that directory. Do not run it from an archive preview or copy only the EXE. The ZIP avoids installation, but settings, credentials, and sessions remain in the Windows application-data directory and do not move with the program directory.
+For the ZIP package, fully extract the archive to a normal writable directory and run `DSH-Desktop-Unofficial.exe` from that directory. Do not run it from an archive preview or copy only the EXE. The ZIP avoids installation and stores settings, credentials, sessions, workspaces, and user plugins in the `data` directory beside the application. Move the entire extracted directory when relocating the application.
 
 The current Windows installer and executable are not code-signed. Windows may therefore show an unknown-publisher warning, and Microsoft Defender SmartScreen may block the first launch. Continue only after confirming that the file came from this repository's GitHub Releases page. In the SmartScreen dialog, select **More info**, then **Run anyway**. The exact wording may differ between Windows versions.
 
@@ -88,28 +90,37 @@ See the upstream [Web UI guide](https://github.com/deepseek-ai/deepseek-harness/
 
 ## DSH UO Additions
 
+- In-app updates: Windows builds check for DSH UO releases after startup. The NSIS build can download and restart to install an update, while the Windows portable ZIP opens the Releases download page.
+- [User plugin management](harness-overrides/packages/client/ui-dsh-uo-plugin-manager/README.md): install npm packages or local `.tgz` archives under **Settings → Plugins → Manage**, then update or remove user plugins in the current Web profile. Built-in plugins are not shown as removable items.
+- Model configuration improvements: model rows, basic parameters, input capabilities, and reasoning settings open by default. Model information returned by Harness can fill missing context-window and maximum-output values without replacing values already entered by the user, and requested output is capped at the model's declared capability.
 - [Model input capabilities](harness-overrides/packages/client/ui-dsh-uo-model-input/README.md): choose automatic, text-only, or text-and-image input for each model.
 - [Reasoning effort](harness-overrides/packages/client/ui-dsh-uo-reasoning-effort/README.md): provider presets, custom effort mappings, thinking formats, and prompt-role selection.
 - [System-prompt editor](harness-overrides/packages/client/ui-dsh-uo-system-prompt/README.md): create a user Agent preset from Standard and edit its persona system prompt. Saved changes apply to subsequently created sessions.
-- [Harness upstream status](harness-overrides/packages/client/ui-dsh-uo-upstream-status/README.md): shows the bundled Harness commit, official repository movement, and latest npm version in the desktop sidebar. It reports information only and does not download or install updates.
+- [Harness upstream status](harness-overrides/packages/client/ui-dsh-uo-upstream-status/README.md): shows the bundled Harness commit, official repository movement, and latest npm version separately under **Check for updates**. Upstream status is informational and does not directly replace the Harness bundled with the application.
 
-These controls use existing Harness and pi-ai configuration formats. Follow the linked documentation for detailed behavior and limitations.
+Model controls use existing Harness and pi-ai configuration formats. User plugins are written to the DSH data directory used by the current distribution, and the desktop restarts Harness after a successful plugin operation. Follow the linked documentation for detailed behavior and limitations.
 
 ## Updates
 
-DSH UO has no automatic updater. Installable updates are published only through this repository's [GitHub Releases](https://github.com/KaffuAlcaid/dsh-desktop-unofficial/releases) and must be downloaded and installed manually.
+Packaged Windows applications check this repository's [GitHub Releases](https://github.com/KaffuAlcaid/dsh-desktop-unofficial/releases) after startup. The **Check for updates** action in the sidebar can run the check again and presents the DSH UO application version separately from Harness upstream status.
+
+- When the Windows NSIS build finds a new release, it can download the installer and offer **Restart and install**. The installer replaces application files while retaining settings, sessions, and user plugins in AppData.
+- When the Windows portable ZIP finds a new release, it opens the Releases download page. Exit the application and fully extract the new ZIP over the existing directory. Release archives do not contain `data`, so existing portable data remains in place.
+- Linux currently has no in-app download or installation. Download a new AppImage or ZIP manually from Releases.
 
 The upstream-status action presents the Harness source revision bundled by DSH UO, movement on the official GitHub default branch, and the npm `latest` version of `@deepseek-ai/dsh`. A newer GitHub commit or npm version indicates an upstream change, but it does not mean that a compatible DSH UO package is available. DSH UO remains pinned until the change has been reviewed, adapted, and released as a new desktop package.
 
 ## Data and Logs
 
-The Windows ZIP stores Harness settings, credentials, and sessions under `data/dsh-home` beside the extracted application, with the default workspace under `data/workspace`. On first launch, when those portable directories do not exist, the application detects the Electron user-data directory for `DSH Desktop Unofficial` and copies any existing `dsh-home` and `workspace`; the AppData originals remain untouched, and later launches use only the portable directories. The NSIS installation continues to use the operating system's Electron user-data directory.
+The Windows and Linux portable ZIP builds store Harness settings, credentials, sessions, and user plugins under `data/dsh-home` beside the extracted application, with the default workspace under `data/workspace`. On first launch, when those portable directories do not exist, the application detects the operating system's Electron user-data directory for `DSH Desktop Unofficial` and copies any existing `dsh-home` and `workspace`. The original data remains untouched, and later launches use only the portable directories. The Windows NSIS and Linux AppImage builds continue to use the operating system's Electron user-data directory.
 
 Desktop and Harness process output is written to:
 
 ```text
 Windows ZIP: <extracted directory>/data/logs/dsh-desktop.log
 NSIS installation: <system Documents directory>/DSH-UO/logs/dsh-desktop.log
+Linux ZIP: <extracted directory>/data/logs/dsh-desktop.log
+Linux AppImage: <system Documents directory>/DSH-UO/logs/dsh-desktop.log
 ```
 
 When startup fails, the error screen shows the resolved log path.
@@ -118,7 +129,8 @@ When startup fails, the error screen shows the resolved log path.
 
 - Windows and Linux x64 are the only packaged targets.
 - Windows release packages are currently unsigned, so the first launch may show an unknown-publisher or SmartScreen warning.
-- Application updates require a manual download from GitHub Releases.
+- In-app download and installation are available only in the Windows NSIS build. ZIP and Linux distributions still require a manual application download from GitHub Releases.
+- The plugin manager installs npm packages or local `.tgz` archives; it does not provide a plugin marketplace, recommendation catalog, or compatibility guarantee for third-party plugins.
 - Linux requires XWayland by default; native Wayland remains experimental.
 - Harness and DSH UO are preview software and may introduce incompatible changes.
 - Upstream compatibility is tied to the repository and full commit recorded in [`upstream/harness.json`](upstream/harness.json).
