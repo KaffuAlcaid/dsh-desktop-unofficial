@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { access, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { errorText, type DesktopLogger } from './logger.js'
+import { forceTerminateProcessTree, hasExited, signalProcessTree, waitForExit } from './process-tree.js'
 
 const READY_PATTERN = /dsh web: (http:\/\/127\.0\.0\.1:\d+)/u
 const STARTUP_TIMEOUT_MS = 60_000
@@ -42,6 +43,8 @@ export class DshServer {
   /** Start Harness and resolve after it prints its loopback URL. */
   async start(): Promise<string> {
     if (this.child !== undefined) throw new Error('DSH server has already been started')
+    this.expectedExit = false
+    this.output = ''
 
     const entry = await resolveDshEntry(this.options.harnessDir)
     await mkdir(this.options.homeDir, { recursive: true })
@@ -60,6 +63,7 @@ export class DshServer {
           ...process.env,
           DSH_HOME: this.options.homeDir,
         },
+        detached: process.platform !== 'win32',
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       },
@@ -104,6 +108,7 @@ export class DshServer {
         fail(new Error(`Unable to start DSH: ${error.message}`))
       })
       child.once('exit', (code, signal) => {
+        if (this.child === child) this.child = undefined
         this.logger.info('dsh', `Child process exited (${exitLabel(code, signal)})`)
         if (!settled) {
           fail(new Error(`DSH exited before startup completed (${exitLabel(code, signal)})\n${this.output}`))
@@ -114,18 +119,30 @@ export class DshServer {
     })
   }
 
+  /** Whether the owned Harness process is still running. */
+  isRunning(): boolean {
+    return this.child !== undefined && !hasExited(this.child)
+  }
+
   /** Ask Harness to stop and bound how long Electron waits during shutdown. */
   async stop(): Promise<void> {
     this.expectedExit = true
     const child = this.child
-    if (child === undefined || hasExited(child)) return
+    if (child === undefined) return
+    if (hasExited(child)) {
+      if (this.child === child) this.child = undefined
+      return
+    }
 
     this.logger.info('dsh', `Stopping child process PID ${String(child.pid ?? 'unknown')}`)
-    child.kill('SIGTERM')
+    if (process.platform === 'win32') {
+      await forceTerminateProcessTree(child)
+      return
+    }
+    signalProcessTree(child, 'SIGTERM')
     if (await waitForExit(child, SHUTDOWN_TIMEOUT_MS)) return
 
-    child.kill('SIGKILL')
-    await waitForExit(child, 1_000)
+    await forceTerminateProcessTree(child)
   }
 }
 
@@ -143,25 +160,6 @@ async function resolveDshEntry(harnessDir: string): Promise<string> {
     }
   }
   throw new Error(`DSH entry was not found under ${harnessDir}`)
-}
-
-function hasExited(child: ChildProcess): boolean {
-  return child.exitCode !== null || child.signalCode !== null
-}
-
-function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
-  if (hasExited(child)) return Promise.resolve(true)
-  return new Promise((resolve) => {
-    const onExit = (): void => {
-      clearTimeout(timer)
-      resolve(true)
-    }
-    const timer = setTimeout(() => {
-      child.off('exit', onExit)
-      resolve(false)
-    }, timeoutMs)
-    child.once('exit', onExit)
-  })
 }
 
 function exitLabel(code: number | null, signal: NodeJS.Signals | null): string {

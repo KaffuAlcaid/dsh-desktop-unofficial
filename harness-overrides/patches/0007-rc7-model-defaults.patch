@@ -1,0 +1,411 @@
+diff --git a/packages/client/ui-settings-models/src/client/ModelListEditor.tsx b/packages/client/ui-settings-models/src/client/ModelListEditor.tsx
+index b529c684ef..b8dc049000 100644
+--- a/packages/client/ui-settings-models/src/client/ModelListEditor.tsx
++++ b/packages/client/ui-settings-models/src/client/ModelListEditor.tsx
+@@ -194,20 +194,13 @@ function IconTrash(): ReactNode {
+ /** The two token counts edited as K/M-suffixed text behind a row's disclosure. */
+ type CapacityField = 'contextWindow' | 'maxTokens'
+ 
+-/**
+- * What an empty capacity field is worth, shown as its placeholder so a row left
+- * blank does not read as a model with no capacity at all.
+- *
+- * The magnitudes are the adapter's own route-level fallbacks (`llm-pi-ai`'s
+- * `defaultContextWindow` and `defaultMaxTokens`), spelled the way a person
+- * would say them. They are a hint, not a mirror: this page counts `K` as 1000,
+- * so typing `256K` stores 256000 while leaving the field blank keeps the
+- * adapter's 262144. A deployment that overrides those defaults is not
+- * reflected here — nothing on this page can read them.
+- */
+-const CAPACITY_HINT: Readonly<Record<CapacityField, string>> = {
+-  contextWindow: '256K',
+-  maxTokens: '32K',
++/** Independently collapsible sections inside each model row. */
++const MODEL_SECTIONS = ['basic', 'input', 'reasoning'] as const
++type ModelSection = typeof MODEL_SECTIONS[number]
++
++/** Stable state key for one model row's nested section. */
++function modelSectionKey(index: number, section: ModelSection): string {
++  return `${String(index)}:${section}`
+ }
+ 
+ /**
+@@ -231,6 +224,19 @@ function adopt(candidate: DiscoveredModelView): ModelDraft {
+   }
+ }
+ 
++/** Fill only capacities an existing row has not already configured. */
++function adoptMissingCapacities(model: ModelDraft, candidate: DiscoveredModelView): ModelDraft {
++  return {
++    ...model,
++    ...Object.hasOwn(model, 'contextWindow') || candidate.contextWindow === undefined
++      ? {}
++      : { contextWindow: candidate.contextWindow },
++    ...Object.hasOwn(model, 'maxTokens') || candidate.maxTokens === undefined
++      ? {}
++      : { maxTokens: candidate.maxTokens },
++  }
++}
++
+ /**
+  * Render the model list with its fetch action.
+  * @param props - the drafted rows, probe target, wire face, and copy.
+@@ -242,10 +248,15 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+   const [failure, setFailure] = useState<string | undefined>(undefined)
+   const [candidates, setCandidates] = useState<readonly DiscoveredModelView[] | undefined>(undefined)
+   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
+-  // One row can stay open while another is inspected; Basic and the optional
+-  // input/reasoning plugin folds independently inside it.
+-  const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
+-  const [openSections, setOpenSections] = useState<ReadonlySet<string>>(new Set())
++  // Existing rows and their common sections start open. These are initializers,
++  // so a manual collapse remains in force for the rest of this editor session.
++  const [expanded, setExpanded] = useState<ReadonlySet<number>>(
++    () => new Set(models.map((_model, index) => index)),
++  )
++  const [openSections, setOpenSections] = useState<ReadonlySet<string>>(
++    () => new Set(models.flatMap((_model, index) =>
++      MODEL_SECTIONS.map(section => modelSectionKey(index, section)))),
++  )
+   // Capacities are edited as text, so a field's keystrokes are held here rather
+   // than re-derived from the parsed count on every change — that would rewrite
+   // `1000` to `1K` mid-word. Unreadable text is kept past blur so the refusal
+@@ -266,6 +277,14 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+   const capacityText = (model: ModelDraft, index: number, field: CapacityField): string =>
+     editing.get(bufferKey(index, field)) ?? capacitySpelling(numberOf(model, field))
+ 
++  /** Compact capacity summary without inventing numeric defaults. */
++  const capacitySummary = (model: ModelDraft, index: number): string => {
++    const contextWindow = capacityText(model, index, 'contextWindow')
++    const maxTokens = capacityText(model, index, 'maxTokens')
++    if (contextWindow === '' && maxTokens === '') return t('modelCapacityAutomatic')
++    return `${contextWindow || t('modelCapacityAutomatic')} · ${maxTokens || t('modelCapacityAutomatic')}`
++  }
++
+   /** Drop one row's entries and shift the rows after it down, in one pass. */
+   const reindexOnRemove = (
+     current: ReadonlyMap<string, string>,
+@@ -281,20 +300,27 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+     return next
+   }
+ 
++  const openModels = (indices: readonly number[]): void => {
++    setExpanded(current => new Set([...current, ...indices]))
++    setOpenSections((current) => {
++      const next = new Set(current)
++      for (const index of indices) {
++        for (const section of MODEL_SECTIONS) next.add(modelSectionKey(index, section))
++      }
++      return next
++    })
++  }
++
+   const toggleExpanded = (index: number): void => {
+-    const opening = !expanded.has(index)
+     setExpanded((current) => {
+       const next = new Set(current)
+       if (!next.delete(index)) next.add(index)
+       return next
+     })
+-    if (opening && props.customProvider === true) {
+-      setOpenSections((current) => new Set(current).add(`${String(index)}:reasoning`))
+-    }
+   }
+ 
+-  const toggleSection = (index: number, section: 'basic' | 'input' | 'reasoning'): void => {
+-    const key = `${String(index)}:${section}`
++  const toggleSection = (index: number, section: ModelSection): void => {
++    const key = modelSectionKey(index, section)
+     setOpenSections((current) => {
+       const next = new Set(current)
+       if (!next.delete(key)) next.add(key)
+@@ -362,15 +388,23 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+     /* v8 ignore next -- the dialog only renders with candidates loaded */
+     if (candidates === undefined) return
+     const byId = new Map(models.map(model => [textOf(model, 'id'), model]))
++    const added: number[] = []
+     for (const candidate of candidates) {
+       if (!picked.has(candidate.id)) continue
+-      // A row the user already tuned wins over the provider's own numbers.
++      // A row the user already tuned wins per field. Explicitly selecting an
++      // existing row can fill a missing capacity without replacing one the
++      // user already configured.
+       // Keyed by id, so a half-typed row whose id is still empty is not a
+       // match and the candidate joins as its own row — correct, since a row
+       // without an id is not yet a model and the create/apply gates refuse it.
+-      byId.set(candidate.id, byId.get(candidate.id) ?? adopt(candidate))
++      const current = byId.get(candidate.id)
++      if (current === undefined) {
++        added.push(byId.size)
++        byId.set(candidate.id, adopt(candidate))
++      } else byId.set(candidate.id, adoptMissingCapacities(current, candidate))
+     }
+     onChange([...byId.values()])
++    openModels(added)
+     closePicker()
+   }
+ 
+@@ -503,7 +537,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+                     <IconChevron open={openSections.has(`${String(index)}:basic`)} />
+                     <span>{t('modelBasic')}</span>
+                     <span className={styles['modelFoldMeta']}>
+-                      {`${capacityText(model, index, 'contextWindow') || CAPACITY_HINT.contextWindow} · ${capacityText(model, index, 'maxTokens') || CAPACITY_HINT.maxTokens}`}
++                      {capacitySummary(model, index)}
+                     </span>
+                   </button>
+                   {openSections.has(`${String(index)}:basic`)
+@@ -517,7 +551,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+                               type="text"
+                               inputMode="numeric"
+                               value={capacityText(model, index, 'contextWindow')}
+-                              placeholder={CAPACITY_HINT.contextWindow}
++                              placeholder={t('contextWindowPlaceholder')}
+                               aria-label={`${t('modelContextWindow')} ${index + 1}`}
+                               disabled={disabled}
+                               onChange={(event) => { editCapacity(index, 'contextWindow', event.target.value) }}
+@@ -530,7 +564,7 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+                               type="text"
+                               inputMode="numeric"
+                               value={capacityText(model, index, 'maxTokens')}
+-                              placeholder={CAPACITY_HINT.maxTokens}
++                              placeholder={t('maxTokensPlaceholder')}
+                               aria-label={`${t('modelMaxTokens')} ${index + 1}`}
+                               disabled={disabled}
+                               onChange={(event) => { editCapacity(index, 'maxTokens', event.target.value) }}
+@@ -572,7 +606,10 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
+         type="button"
+         className={styles['addModelButton']}
+         disabled={disabled}
+-        onClick={() => { onChange([...models, { id: '' }]) }}
++        onClick={() => {
++          openModels([models.length])
++          onChange([...models, { id: '' }])
++        }}
+       >
+         {t('addModel')}
+       </button>
+diff --git a/packages/client/ui-settings-models/src/client/locales.ts b/packages/client/ui-settings-models/src/client/locales.ts
+index d3dbfd3..2d413b2 100644
+--- a/packages/client/ui-settings-models/src/client/locales.ts
++++ b/packages/client/ui-settings-models/src/client/locales.ts
+@@ -51,6 +51,7 @@ export const en = {
+   maxTokensPlaceholder: 'Uses the provider default',
+   modelAdvanced: 'Model settings',
+   modelBasic: 'Basic parameters',
++  modelCapacityAutomatic: 'Automatic provider/upstream value',
+   addModel: 'Add model',
+   removeModel: 'Delete model',
+   modelsEmpty: 'No models will be shown in the selector. Unlisted IDs can still be sent directly.',
+@@ -153,6 +154,7 @@ export const zh: { [Key in keyof typeof en]: string } = {
+   maxTokensPlaceholder: '使用提供方默认值',
+   modelAdvanced: '模型设置',
+   modelBasic: '基础参数',
++  modelCapacityAutomatic: '自动采用上游或提供方值',
+   addModel: '添加模型',
+   removeModel: '删除模型',
+   modelsEmpty: '模型选择器中将不显示任何模型；目录外 ID 仍可直接发送。',
+diff --git a/packages/client/ui-settings-models/tests/provider-form.client.spec.tsx b/packages/client/ui-settings-models/tests/provider-form.client.spec.tsx
+index 0c97573..71e2642 100644
+--- a/packages/client/ui-settings-models/tests/provider-form.client.spec.tsx
++++ b/packages/client/ui-settings-models/tests/provider-form.client.spec.tsx
+@@ -180,18 +180,16 @@ function openEditor(provider: string): void {
+   fireEvent.click(summary)
+ }
+ 
+-/** Toggle one model row; when opening, open its nested capacity fold too. */
++/** Ensure one model row and its nested capacity fold are open. */
+ function expandModel(index: number): void {
+   const outer = screen.getByLabelText(`${en.modelAdvanced} ${index}`)
+-  const opening = outer.getAttribute('aria-expanded') !== 'true'
+-  fireEvent.click(outer)
+-  if (!opening) return
++  if (outer.getAttribute('aria-expanded') !== 'true') fireEvent.click(outer)
+   const input = screen.getByLabelText(`${en.modelId} ${index}`)
+   const entry = input.parentElement?.parentElement
+   const basic = [...(entry?.querySelectorAll('button') ?? [])]
+     .find(button => button.textContent?.includes(en.modelBasic))
+   if (basic === undefined) throw new Error(`no basic fold for model ${index}`)
+-  fireEvent.click(basic)
++  if (basic.getAttribute('aria-expanded') !== 'true') fireEvent.click(basic)
+ }
+ 
+ /** The button carrying `label`, typed so its disabled/title state is readable. */
+@@ -274,13 +272,13 @@ describe('model list editing', () => {
+ 
+     expandModel(1)
+     expandModel(2)
+-    expect(screen.getByLabelText('input slot 1').textContent).toBe('closed')
+-    expect(screen.getByLabelText('input slot 2').textContent).toBe('closed')
++    expect(screen.getByLabelText('input slot 1').textContent).toBe('open')
++    expect(screen.getByLabelText('input slot 2').textContent).toBe('open')
+     expect(screen.getByLabelText('reasoning slot 1').textContent).toBe('open')
+     expect(screen.getByLabelText('reasoning slot 2').textContent).toBe('open')
+     fireEvent.click(screen.getByLabelText('input slot 1'))
+-    expect(screen.getByLabelText('input slot 1').textContent).toBe('open')
+-    expect(screen.getByLabelText('input slot 2').textContent).toBe('closed')
++    expect(screen.getByLabelText('input slot 1').textContent).toBe('closed')
++    expect(screen.getByLabelText('input slot 2').textContent).toBe('open')
+     fireEvent.click(screen.getByLabelText('reasoning slot 1'))
+     expect(screen.getByLabelText('reasoning slot 1').textContent).toBe('closed')
+     expect(screen.getByLabelText('reasoning slot 2').textContent).toBe('open')
+@@ -294,7 +292,7 @@ describe('model list editing', () => {
+     )
+   })
+ 
+-  it('keeps the reasoning slot folded by default for a catalog provider', async () => {
++  it('opens the reasoning slot by default for a catalog provider', async () => {
+     const renderSlot = vi.fn((key: string, owner: ModelInputOwnerProps | ModelReasoningOwnerProps) =>
+       key === 'settings.models.model.reasoning'
+         ? <span data-testid="reasoning-open">{String(owner.open)}</span>
+@@ -305,7 +303,7 @@ describe('model list editing', () => {
+     openEditor('openai')
+     expandModel(1)
+ 
+-    expect(screen.getByTestId('reasoning-open').textContent).toBe('false')
++    expect(screen.getByTestId('reasoning-open').textContent).toBe('true')
+   })
+ 
+   it('names a duplicate model id in the edit flow too', async () => {
+@@ -426,13 +424,13 @@ describe('model list editing', () => {
+     })
+     openEditor('openai')
+ 
+-    // Expansion is keyed by position, so removing an earlier row shifts the
+-    // rest down; without reindexing, row 3 would inherit row 2's open state.
+-    expandModel(2)
++    // Expansion is keyed by position. A manual collapse on row 3 must follow
++    // that row when removing an earlier one.
++    fireEvent.click(screen.getByLabelText(`${en.modelAdvanced} 3`))
+     fireEvent.click(screen.getByLabelText(`${en.removeModel} 1`))
+ 
+-    // 'second' now sits at position 1 and keeps its capacities open; 'third'
+-    // moved to position 2 and stays folded.
++    // 'second' now sits at position 1 and stays open; 'third' moves to
++    // position 2 and keeps the manual collapse.
+     expect(screen.getByLabelText<HTMLInputElement>(`${en.modelId} 1`).value).toBe('second')
+     expect(screen.queryByLabelText(`${en.modelContextWindow} 1`)).not.toBeNull()
+     expect(screen.queryByLabelText(`${en.modelContextWindow} 2`)).toBeNull()
+@@ -449,17 +447,19 @@ describe('model list editing', () => {
+     })
+     openEditor('openai')
+ 
+-    // A row before the removal keeps its own position and stays open.
+-    expandModel(1)
++    // A row before the removal keeps its own position and stays open. Closing
++    // row 2 before removing it must not hand that state to row 3.
++    fireEvent.click(screen.getByLabelText(`${en.modelAdvanced} 2`))
+     fireEvent.click(screen.getByLabelText(`${en.removeModel} 2`))
+     expect(screen.getByLabelText<HTMLInputElement>(`${en.modelId} 1`).value).toBe('first')
+     expect(screen.queryByLabelText(`${en.modelContextWindow} 1`)).not.toBeNull()
++    expect(screen.getByLabelText<HTMLInputElement>(`${en.modelId} 2`).value).toBe('third')
++    expect(screen.queryByLabelText(`${en.modelContextWindow} 2`)).not.toBeNull()
+ 
+-    // Removing the expanded row itself drops that state rather than handing it
+-    // to whichever row slides into the position.
++    // Removing the first row shifts the still-open third row into position 1.
+     fireEvent.click(screen.getByLabelText(`${en.removeModel} 1`))
+     expect(screen.getByLabelText<HTMLInputElement>(`${en.modelId} 1`).value).toBe('third')
+-    expect(screen.queryByLabelText(`${en.modelContextWindow} 1`)).toBeNull()
++    expect(screen.queryByLabelText(`${en.modelContextWindow} 1`)).not.toBeNull()
+   })
+ 
+   it('separates emptying the list from restoring the adapter defaults', async () => {
+@@ -560,7 +560,10 @@ describe('endpoint interrogation', () => {
+ 
+   it('adopts only the picked candidates, keeping a row the user already tuned', async () => {
+     const discover = vi.fn(() => Promise.resolve(ok({
+-      models: [{ id: 'kept', contextWindow: 999 }, { id: 'fresh', contextWindow: 4096, name: 'Fresh' }],
++      models: [
++        { id: 'kept', contextWindow: 999, maxTokens: 2048 },
++        { id: 'fresh', contextWindow: 4096, maxTokens: 1024, name: 'Fresh' },
++      ],
+     })))
+     const { mutate } = await mountSection({
+       discover,
+@@ -573,13 +576,15 @@ describe('endpoint interrogation', () => {
+     // The already-configured row starts unchecked; the new one starts checked.
+     const boxes = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+     expect(boxes.map(box => box.checked)).toEqual([false, true])
++    // Explicitly selecting it fills only the capacity that is still absent.
++    fireEvent.click(boxes[0] as HTMLInputElement)
+     fireEvent.click(screen.getByText(en.fetchAdopt))
+ 
+     fireEvent.click(screen.getByText(en.apply))
+     await waitFor(() => { expect(mutate).toHaveBeenCalled() })
+     expect(firstMutate(mutate).ops[0]?.value).toEqual([
+-      { id: 'kept', contextWindow: 111 },
+-      { id: 'fresh', contextWindow: 4096, name: 'Fresh' },
++      { id: 'kept', contextWindow: 111, maxTokens: 2048 },
++      { id: 'fresh', contextWindow: 4096, maxTokens: 1024, name: 'Fresh' },
+     ])
+   })
+ 
+@@ -650,17 +655,21 @@ describe('endpoint interrogation', () => {
+     })
+   })
+ 
+-  it('folds a row\u2019s capacities away until they are asked for', async () => {
++  it('opens model settings by default and preserves a manual nested collapse', async () => {
+     await mountSection({
+       providers: { openai: { baseURL: 'https://proxy.example/v1', models: [{ id: 'only' }] } },
+     })
+     openEditor('openai')
+ 
+-    // The row shows what identifies a model; capacities are the exception.
+-    expect(screen.queryByLabelText(`${en.modelContextWindow} 1`)).toBeNull()
+-    expandModel(1)
++    // Existing model, Basic, Input, and Reasoning sections start open.
+     expect(screen.getByLabelText(`${en.modelContextWindow} 1`)).toBeTruthy()
+-    expandModel(1)
++    fireEvent.click(screen.getByText(en.modelBasic))
++    expect(screen.queryByLabelText(`${en.modelContextWindow} 1`)).toBeNull()
++
++    // Closing and reopening the outer model row does not reopen Basic.
++    const outer = screen.getByLabelText(`${en.modelAdvanced} 1`)
++    fireEvent.click(outer)
++    fireEvent.click(outer)
+     expect(screen.queryByLabelText(`${en.modelContextWindow} 1`)).toBeNull()
+   })
+ 
+diff --git a/packages/llm/llm-pi-ai/src/adapter.ts b/packages/llm/llm-pi-ai/src/adapter.ts
+index ab1c784..36821f3 100644
+--- a/packages/llm/llm-pi-ai/src/adapter.ts
++++ b/packages/llm/llm-pi-ai/src/adapter.ts
+@@ -321,7 +321,10 @@ export class PiAiAdapter extends LlmAdapter {
+       const events = snapshot.models.streamSimple(model, context, {
+         ...profileOptions(profile, reasoning, apiKey),
+         ...options.temperature === undefined ? {} : { temperature: options.temperature },
+-        ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
++        // Older sessions and explicit agent parameters can outlive a model
++        // catalog update. Keep their requested cap, but never send more than
++        // the currently resolved model supports.
++        ...options.maxTokens === undefined ? {} : { maxTokens: Math.min(options.maxTokens, model.maxTokens) },
+         ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
+         signal: watchdog.signal,
+         // Profile headers are deployment-owned; attribution names are
+diff --git a/packages/llm/llm-pi-ai/tests/adapter.spec.ts b/packages/llm/llm-pi-ai/tests/adapter.spec.ts
+index 25844a1..4cc038c 100644
+--- a/packages/llm/llm-pi-ai/tests/adapter.spec.ts
++++ b/packages/llm/llm-pi-ai/tests/adapter.spec.ts
+@@ -110,6 +110,21 @@ describe('PiAiAdapter provider routing', () => {
+     })
+   })
+ 
++  it('clamps an explicit output limit to the resolved model capability', async () => {
++    const server = await mockServer([{ events: textEvents }])
++    const ctx = await harness(server.url)
++    const model = getBuiltinModels('deepseek').find(entry => entry.id === 'deepseek-v4-flash')
++    if (model === undefined) throw new Error('missing test model')
++
++    await assemble(ctx, {
++      model: model.id,
++      messages: [],
++      maxTokens: model.maxTokens + 1,
++    })
++
++    expect(server.requests[0]).toMatchObject({ max_completion_tokens: model.maxTokens })
++  })
++
+   it('uses a dynamic request effort and reports unsupported efforts before network I/O', async () => {
+     const server = await mockServer([{ events: textEvents }, { events: textEvents }])
+     const ctx = await harness(server.url, { reasoning: 'max' })

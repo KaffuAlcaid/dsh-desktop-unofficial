@@ -1,19 +1,38 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
-import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron'
-import type { HarnessUpstreamCheckResult } from './desktop-api.js'
+import { delimiter, dirname, join, resolve } from 'node:path'
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type OpenDialogOptions } from 'electron'
+import { ApplicationUpdater } from './app-updater.js'
+import type {
+  AppUpdateMode, AppUpdateOperationResult, HarnessRestartResult, HarnessUpstreamCheckResult,
+} from './desktop-api.js'
 import { DshServer, type DshExit } from './dsh-process.js'
 import { DesktopLogger, errorText } from './logger.js'
+import {
+  DshPluginManager, type PluginListResult, type PluginMutationResult, type PluginTarget,
+} from './plugin-manager.js'
 import { checkHarnessUpstream } from './upstream-status.js'
 
 const PRODUCT_NAME = 'DSH UO'
 const PROFILE_NAME = 'DSH Desktop Unofficial'
 const CHECK_HARNESS_UPSTREAM_CHANNEL = 'dsh-desktop:check-harness-upstream'
+const GET_APP_UPDATE_STATE_CHANNEL = 'dsh-desktop:get-app-update-state'
+const CHECK_APP_UPDATE_CHANNEL = 'dsh-desktop:check-app-update'
+const DOWNLOAD_APP_UPDATE_CHANNEL = 'dsh-desktop:download-app-update'
+const INSTALL_APP_UPDATE_CHANNEL = 'dsh-desktop:install-app-update'
+const OPEN_APP_UPDATE_PAGE_CHANNEL = 'dsh-desktop:open-app-update-page'
+const APP_UPDATE_STATE_CHANNEL = 'dsh-desktop:app-update-state'
+const LIST_PLUGINS_CHANNEL = 'dsh-desktop:list-plugins'
+const INSTALL_PLUGIN_CHANNEL = 'dsh-desktop:install-plugin'
+const UPDATE_PLUGIN_CHANNEL = 'dsh-desktop:update-plugin'
+const REMOVE_PLUGIN_CHANNEL = 'dsh-desktop:remove-plugin'
+const PICK_PLUGIN_ARCHIVE_CHANNEL = 'dsh-desktop:pick-plugin-archive'
+const RESTART_HARNESS_CHANNEL = 'dsh-desktop:restart-harness'
 const PORTABLE_MARKER = '.dsh-uo-portable'
 const PORTABLE_IMPORT_MARKER = '.appdata-import-checked'
 const PORTABLE_FALLBACK_RESET_MARKER = '.appdata-import-fallback-reset'
 
 interface DesktopStorage {
+  portable: boolean
   homeDir: string
   workspaceDir: string
   logPath: string | null
@@ -24,7 +43,13 @@ interface DesktopStorage {
 let mainWindow: BrowserWindow | null = null
 let dshServer: DshServer | undefined
 let logger: DesktopLogger | undefined
+let applicationUpdater: ApplicationUpdater | undefined
+let pluginManager: DshPluginManager | undefined
+let pluginOperationActive = false
 let quitting = false
+let nativeQuitAllowed = false
+let normalQuitPending = false
+let shutdownPromise: Promise<void> | undefined
 let allowedOrigin: string | undefined
 
 app.setName(PROFILE_NAME)
@@ -41,12 +66,16 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('before-quit', (event) => {
-    if (quitting) return
+    if (nativeQuitAllowed) return
     event.preventDefault()
-    quitting = true
-    logger?.info('desktop', 'Application shutdown requested')
-    const stopped = dshServer?.stop() ?? Promise.resolve()
-    void stopped.finally(() => { app.exit(0) })
+    if (normalQuitPending) return
+    normalQuitPending = true
+    void prepareForNativeQuit('Application shutdown requested')
+      .finally(() => {
+        nativeQuitAllowed = true
+        app.quit()
+      })
+      .catch(() => {})
   })
 
   app.on('window-all-closed', () => { app.quit() })
@@ -56,7 +85,6 @@ if (!app.requestSingleInstanceLock()) {
 
 async function startDesktop(): Promise<void> {
   Menu.setApplicationMenu(null)
-  registerDesktopApi()
   const window = createWindow()
   mainWindow = window
   window.on('closed', () => { mainWindow = null })
@@ -75,13 +103,39 @@ async function startDesktop(): Promise<void> {
     'desktop',
     `Starting ${PRODUCT_NAME} ${app.getVersion()} (Electron ${process.versions.electron}, Node ${process.versions.node})`,
   )
+  applicationUpdater = new ApplicationUpdater({
+    mode: resolveAppUpdateMode(),
+    currentVersion: app.getVersion(),
+    logger: desktopLogger,
+    beforeInstall: async () => {
+      if (pluginOperationActive) throw new Error('请等待当前插件操作完成后再安装更新')
+      await prepareForNativeQuit('Application update installation requested')
+      nativeQuitAllowed = true
+    },
+    afterInstallFailure: recoverAfterFailedUpdateInstall,
+    onState: (state) => {
+      for (const target of BrowserWindow.getAllWindows()) {
+        if (!target.isDestroyed()) target.webContents.send(APP_UPDATE_STATE_CHANNEL, state)
+      }
+    },
+  })
+  const harnessDir = resolveHarnessDir()
+  const nodeExecutable = resolveNodeExecutable()
+  pluginManager = new DshPluginManager({
+    runtimeDir: harnessDir,
+    nodeExecutable,
+    homeDir: storage.homeDir,
+    workingDir: storage.workspaceDir,
+    environment: resolvePluginEnvironment(),
+  })
+  registerDesktopApi()
   if (storage.imported.length > 0) {
     desktopLogger.info('desktop', `Imported portable data from AppData: ${storage.imported.join(', ')}`)
   }
   const server = new DshServer(
     {
-      harnessDir: resolveHarnessDir(),
-      nodeExecutable: resolveNodeExecutable(),
+      harnessDir,
+      nodeExecutable,
       homeDir: storage.homeDir,
       workspaceDir: storage.workspaceDir,
     },
@@ -95,6 +149,9 @@ async function startDesktop(): Promise<void> {
     allowedOrigin = new URL(url).origin
     await window.loadURL(url)
     desktopLogger.info('desktop', `WebUI loaded from ${url}`)
+    if (applicationUpdater.getState().mode !== 'unsupported') {
+      void applicationUpdater.check()
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     desktopLogger.error('desktop', `DSH startup failed: ${errorText(error)}`)
@@ -105,6 +162,7 @@ async function startDesktop(): Promise<void> {
 function configureDesktopStorage(): DesktopStorage {
   const installedUserData = app.getPath('userData')
   const installed: DesktopStorage = {
+    portable: false,
     homeDir: join(installedUserData, 'dsh-home'),
     workspaceDir: join(installedUserData, 'workspace'),
     logPath: null,
@@ -146,6 +204,7 @@ function configureDesktopStorage(): DesktopStorage {
   }
 
   return {
+    portable: true,
     homeDir: join(dataRoot, 'dsh-home'),
     workspaceDir: join(dataRoot, 'workspace'),
     logPath: join(dataRoot, 'logs', 'dsh-desktop.log'),
@@ -236,6 +295,165 @@ function registerDesktopApi(): void {
       return { ok: false, error: message }
     }
   })
+  ipcMain.handle(GET_APP_UPDATE_STATE_CHANNEL, () => getApplicationUpdater().getState())
+  ipcMain.handle(CHECK_APP_UPDATE_CHANNEL, async (): Promise<AppUpdateOperationResult> =>
+    await getApplicationUpdater().check())
+  ipcMain.handle(DOWNLOAD_APP_UPDATE_CHANNEL, async (): Promise<AppUpdateOperationResult> =>
+    await getApplicationUpdater().download())
+  ipcMain.handle(INSTALL_APP_UPDATE_CHANNEL, async (): Promise<AppUpdateOperationResult> =>
+    await getApplicationUpdater().install())
+  ipcMain.handle(OPEN_APP_UPDATE_PAGE_CHANNEL, async (): Promise<AppUpdateOperationResult> => {
+    const updater = getApplicationUpdater()
+    try {
+      await shell.openExternal(updater.getState().releaseUrl)
+      return { ok: true, state: updater.getState() }
+    } catch (error) {
+      const message = errorText(error)
+      logger?.error('update', `Unable to open release page: ${message}`)
+      return { ok: false, error: message, state: updater.getState() }
+    }
+  })
+  ipcMain.handle(LIST_PLUGINS_CHANNEL, async (): Promise<PluginListResult> =>
+    await runPluginOperation('Listing installed plugins', async manager => await manager.list()))
+  ipcMain.handle(
+    INSTALL_PLUGIN_CHANNEL,
+    async (_event, target: PluginTarget): Promise<PluginMutationResult> =>
+      await runPluginOperation('Installing plugin', async manager => await manager.install(target)),
+  )
+  ipcMain.handle(
+    UPDATE_PLUGIN_CHANNEL,
+    async (_event, target: PluginTarget): Promise<PluginMutationResult> =>
+      await runPluginOperation('Updating plugin', async manager => await manager.update(target)),
+  )
+  ipcMain.handle(
+    REMOVE_PLUGIN_CHANNEL,
+    async (_event, target: PluginTarget): Promise<PluginMutationResult> =>
+      await runPluginOperation('Removing plugin', async manager => await manager.remove(target)),
+  )
+  ipcMain.handle(PICK_PLUGIN_ARCHIVE_CHANNEL, async (): Promise<string | null> => {
+    const options: OpenDialogOptions = {
+      title: '选择 DSH 插件包',
+      filters: [{ name: 'DSH 插件包', extensions: ['tgz'] }],
+      properties: ['openFile'],
+    }
+    const result = mainWindow === null
+      ? await dialog.showOpenDialog(options)
+      : await dialog.showOpenDialog(mainWindow, options)
+    return result.canceled ? null : result.filePaths[0] ?? null
+  })
+  ipcMain.handle(RESTART_HARNESS_CHANNEL, async (): Promise<HarnessRestartResult> => {
+    try {
+      await runExclusivePluginOperation('Restarting DSH after plugin changes', restartHarness)
+      return { ok: true }
+    } catch (error) {
+      const message = errorText(error)
+      logger?.error('plugin', `DSH restart failed: ${message}`)
+      return { ok: false, error: message }
+    }
+  })
+}
+
+function getApplicationUpdater(): ApplicationUpdater {
+  if (applicationUpdater === undefined) throw new Error('Application updater is not initialized')
+  return applicationUpdater
+}
+
+function getPluginManager(): DshPluginManager {
+  if (pluginManager === undefined) throw new Error('Plugin manager is not initialized')
+  return pluginManager
+}
+
+async function runPluginOperation<T>(
+  description: string,
+  operation: (manager: DshPluginManager) => Promise<T>,
+): Promise<T> {
+  return await runExclusivePluginOperation(description, async () => await operation(getPluginManager()))
+}
+
+async function runExclusivePluginOperation<T>(description: string, operation: () => Promise<T>): Promise<T> {
+  if (pluginOperationActive) throw new Error('Another plugin operation is still running')
+  pluginOperationActive = true
+  logger?.info('plugin', description)
+  try {
+    return await operation()
+  } catch (error) {
+    logger?.error('plugin', `${description} failed: ${errorText(error)}`)
+    throw error
+  } finally {
+    pluginOperationActive = false
+  }
+}
+
+async function restartHarness(): Promise<void> {
+  if (quitting) throw new Error('The application is shutting down')
+  const server = dshServer
+  const window = mainWindow
+  if (server === undefined || window === null || window.isDestroyed()) {
+    throw new Error('DSH is not ready to restart')
+  }
+
+  allowedOrigin = undefined
+  await showStatus(window, '正在重启 DSH', '插件已更新，正在重新加载本地 WebUI...')
+  try {
+    await server.stop()
+    const url = await server.start()
+    allowedOrigin = new URL(url).origin
+    await window.loadURL(url)
+    logger?.info('plugin', `DSH restarted at ${url}`)
+  } catch (error) {
+    const message = errorText(error)
+    await showStatus(window, 'DSH 重启失败', message, true)
+    throw error
+  }
+}
+
+function resolveAppUpdateMode(): AppUpdateMode {
+  if (!app.isPackaged || process.platform !== 'win32') return 'unsupported'
+  return storage.portable ? 'portable' : 'installer'
+}
+
+function prepareForNativeQuit(message: string): Promise<void> {
+  quitting = true
+  if (shutdownPromise !== undefined) return shutdownPromise
+  logger?.info('desktop', message)
+  const currentShutdown = Promise.allSettled([
+    pluginManager?.stop() ?? Promise.resolve(),
+    dshServer?.stop() ?? Promise.resolve(),
+  ]).then((results) => {
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (failure !== undefined) throw failure.reason
+  })
+  shutdownPromise = currentShutdown
+  void currentShutdown.catch((error: unknown) => {
+    logger?.error('desktop', `Unable to stop DSH during shutdown: ${errorText(error)}`)
+    if (shutdownPromise === currentShutdown) {
+      shutdownPromise = undefined
+      quitting = false
+    }
+  })
+  return currentShutdown
+}
+
+async function recoverAfterFailedUpdateInstall(): Promise<void> {
+  nativeQuitAllowed = false
+  shutdownPromise = undefined
+  quitting = false
+
+  const server = dshServer
+  const window = mainWindow
+  if (server === undefined || window === null || window.isDestroyed() || server.isRunning()) return
+
+  allowedOrigin = undefined
+  await showStatus(window, '正在恢复 DSH', '更新安装未能启动，正在重新加载本地 WebUI...')
+  try {
+    const url = await server.start()
+    allowedOrigin = new URL(url).origin
+    await window.loadURL(url)
+    logger?.info('update', `DSH restored after update installation failure at ${url}`)
+  } catch (error) {
+    await showStatus(window, 'DSH 恢复失败', errorText(error), true)
+    throw error
+  }
 }
 
 function resolveHarnessManifestPath(): string {
@@ -251,6 +469,23 @@ function resolveNodeExecutable(): string {
     return join(process.resourcesPath, 'runtime', 'node', filename)
   }
   return 'node'
+}
+
+function resolvePluginEnvironment(): NodeJS.ProcessEnv {
+  const packageManagerRoot = app.isPackaged
+    ? join(process.resourcesPath, 'runtime', 'pnpm')
+    : join(app.getAppPath(), 'node_modules', 'pnpm')
+  const executableDirectory = app.isPackaged
+    ? packageManagerRoot
+    : join(app.getAppPath(), 'node_modules', '.bin')
+  const pathKey = Object.keys(process.env).find(key => key.toLowerCase() === 'path') ?? 'PATH'
+  const currentPath = process.env[pathKey]
+  return {
+    DSH_DESKTOP_PNPM_CLI: join(packageManagerRoot, 'bin', 'pnpm.cjs'),
+    [pathKey]: currentPath === undefined || currentPath.length === 0
+      ? executableDirectory
+      : `${executableDirectory}${delimiter}${currentPath}`,
+  }
 }
 
 function isAllowedUrl(target: string): boolean {

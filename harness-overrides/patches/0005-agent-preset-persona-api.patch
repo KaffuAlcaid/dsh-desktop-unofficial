@@ -104,11 +104,11 @@ index bda99362b6..58fde6fdcd 100644
  // Type-only: brings the `ctx.tools` Context merge into this program (viewFor reads presenters).
  import {
    InvalidPresetIdError, PresetExistsError, PresetMountError,
--  PresetNotWritableError, resolveSessionPreset,
-+  PresetNotWritableError, PresetPersonaError, resolveSessionPreset,
-   SETTINGS_NAMESPACE as AGENT_PRESET_SETTINGS_NAMESPACE, UnknownPresetError,
+-  PresetNotWritableError, resolveSessionPreset, UnknownPresetError,
++  PresetNotWritableError, PresetPersonaError, resolveSessionPreset, UnknownPresetError,
  } from '@deepseek-ai/dsh-agent-presets'
  import type { PresetBearingSession } from '@deepseek-ai/dsh-agent-presets'
+ import type {} from '@deepseek-ai/dsh-tools'
 @@ -1019,7 +1019,7 @@ function presetError(agentPreset: string, error: unknown): RpcError {
    if (error instanceof PresetNotWritableError) {
      return { code: 'agent-preset-read-only', message: error.message, details: { agentPreset, reason: error.message } }

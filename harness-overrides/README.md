@@ -8,12 +8,17 @@
 - `packages/client/ui-dsh-uo-reasoning-effort`：占用 Models 页单模型 slot 的独立 Cordis 客户端插件，负责思考强度折叠、预设、自定义映射和系统提示词角色编辑。
 - `packages/client/ui-dsh-uo-model-input`：占用 Models 页独立单模型 slot 的输入能力插件，提供跟随思考映射预设的自动模式，以及仅文本、文本与图片两种手动模式。
 - `packages/client/ui-dsh-uo-system-prompt`：在 Agent 预设页创建用户预设并编辑 persona 系统提示词。创建入口位于官方创造模式入口上方，编辑入口位于每个用户预设卡片中。
+- `packages/client/ui-dsh-uo-plugin-manager`：在设置页管理当前 Web profile 的用户插件，支持 npm 包与本地 `.tgz` 的安装、更新和卸载。
 - `patches/0001-dsh-uo-upstream-status.patch`：侧栏横向页脚布局、插件注册、TypeScript aggregate 与 pnpm 锁文件改动。
 - `patches/0002-dsh-uo-reasoning-effort.patch`：为官方 Models 页加入单模型思考 slot、基础参数折叠、通用映射校验以及 Web bundle 默认插件组合。官方组件只传递模型草稿和展开回调；思考界面与映射逻辑由独立插件提供。自定义提供方展开模型时默认显示思考设置，但不自动写入映射。Gemini 不在预设中。
 - `patches/0003-dsh-uo-model-input.patch`：在基础参数与思考强度之间加入独立输入能力 slot，并将插件登记到 Web bundle、TypeScript aggregate 与 pnpm 锁文件。
 - `patches/0004-pi-ai-developer-role.patch`：开放 pi-ai 已支持的 `compat.supportsDeveloperRole`，允许 `openai-completions` 与 `openai-responses` 模型覆盖系统提示词使用的 `developer` 或 `system` 角色。
 - `patches/0005-agent-preset-persona-api.patch`：为用户 Agent 预设增加 persona 读取与写入 API。写入只替换 `@deepseek-ai/dsh-persona` 的 `config.text`，并保留 YAML 的其他内容与换行格式。
 - `patches/0006-dsh-uo-system-prompt-editor.patch`：为 Agent 预设界面加入可选创建、卡片操作 slot，并注册系统提示词插件。
+- `patches/0007-rc7-model-defaults.patch`：默认展开模型及其基础、输入与思考设置，采用上游返回的容量且不覆盖已有配置，并限制请求的输出上限不超过模型能力。
+- `patches/0008-dsh-uo-plugin-manager.patch`：注册插件管理页，并让桌面版 DSH 使用随程序分发的 pnpm 执行 profile 插件命令。
+
+以上五个 `ui-dsh-uo-*` 包在准备 Harness 时注册为 DSH UO 内置插件，随程序版本更新，不写入用户 profile，也不显示在可卸载列表中。插件管理页只列出 `DSH_HOME/profiles/web/package.json` 的直接依赖；这些用户安装的插件由当前数据目录保存，内置插件和用户插件不会重复注册。
 
 输入能力插件只写 Harness 已有的模型 `input` 字段。自动模式从同一模型已经保存的思考映射反推用户选择的预设：OpenAI GPT、Anthropic Claude、xAI Grok、Kimi 写入 `[text, image]`，GLM、DeepSeek 写入 `[text]`；切换预设时会继续同步，手动选择输入模式后停止跟随。自定义映射或没有选择预设时，自动模式删除显式声明，由 Harness 依次使用内置模型目录、提供方 `defaultInput`，最后回落到 `[text]`。插件不会探测上游接口，也不会按模型 ID 猜测。遇到插件尚不认识的未来模态时，界面保留原配置，直到用户主动选择其他模式。
 

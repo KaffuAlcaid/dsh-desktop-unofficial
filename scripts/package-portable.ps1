@@ -10,17 +10,25 @@ $ErrorActionPreference = 'Stop'
 $env:CI = 'true'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
+$manifestPath = Join-Path $projectRoot 'upstream\harness.json'
 if ([string]::IsNullOrWhiteSpace($HarnessPath)) {
-  $HarnessPath = Join-Path $projectRoot '.build\deepseek-harness'
+  $manifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $manifestPath | ConvertFrom-Json
+  $commit = [string]$manifest.commit
+  if ($commit -notmatch '^[0-9a-fA-F]{40}$') {
+    throw 'upstream/harness.json must contain a full Git commit SHA.'
+  }
+  $HarnessPath = Join-Path $projectRoot ".build\deepseek-harness-$($commit.Substring(0, 8).ToLowerInvariant())"
 }
 $harnessRoot = [IO.Path]::GetFullPath($HarnessPath)
 $runtimeRoot = Join-Path $projectRoot 'resources\runtime'
 $tarballRoot = Join-Path $projectRoot '.build\runtime-tarballs-win-x64'
 $downloadRoot = Join-Path $projectRoot '.build\downloads'
-$manifestPath = Join-Path $projectRoot 'upstream\harness.json'
 $stageScript = Join-Path $PSScriptRoot 'stage-harness-runtime.mjs'
 $builderConfig = Join-Path $projectRoot 'electron-builder.yml'
 $builderCli = Join-Path $projectRoot 'node_modules\electron-builder\cli.js'
+$updaterPackage = Join-Path $projectRoot 'node_modules\electron-updater\package.json'
+$pnpmPackageSource = Join-Path $projectRoot 'node_modules\pnpm'
+$pnpmShimSource = Join-Path $PSScriptRoot 'runtime-pnpm.cmd'
 $pnpmStore = Join-Path $projectRoot '.build\pnpm-store'
 $env:COREPACK_HOME = Join-Path $projectRoot '.build\corepack'
 $env:ELECTRON_BUILDER_CACHE = Join-Path $projectRoot '.build\electron-builder-cache'
@@ -93,15 +101,41 @@ function Add-PortableMarker {
   }
 }
 
-if (-not (Test-Path -LiteralPath $builderCli -PathType Leaf)) {
+function Test-PreparedHarnessCurrent {
+  param([Parameter(Mandatory)] [string]$PreparedRoot)
+
+  $pluginPackage = Join-Path $PreparedRoot 'packages\client\ui-dsh-uo-plugin-manager\package.json'
+  $pluginCli = Join-Path $PreparedRoot 'apps\cli\src\plugin.ts'
+  $modelEditor = Join-Path $PreparedRoot 'packages\client\ui-settings-models\src\client\ModelListEditor.tsx'
+  return (Test-Path -LiteralPath $pluginPackage -PathType Leaf) `
+    -and (Test-Path -LiteralPath $pluginCli -PathType Leaf) `
+    -and (Select-String -LiteralPath $pluginCli -SimpleMatch 'DSH_DESKTOP_PNPM_CLI' -Quiet) `
+    -and (Test-Path -LiteralPath $modelEditor -PathType Leaf) `
+    -and (Select-String -LiteralPath $modelEditor -SimpleMatch 'modelCapacityAutomatic' -Quiet)
+}
+
+$harnessPackage = Join-Path $harnessRoot 'package.json'
+if ((Test-Path -LiteralPath $harnessPackage -PathType Leaf) `
+    -and -not (Test-PreparedHarnessCurrent -PreparedRoot $harnessRoot)) {
+  throw "Prepared Harness is stale and does not contain the current DSH-UO overrides: $harnessRoot`nRemove this generated worktree and run packaging again."
+}
+
+if (-not (Test-Path -LiteralPath $builderCli -PathType Leaf) `
+    -or -not (Test-Path -LiteralPath $updaterPackage -PathType Leaf) `
+    -or -not (Test-Path -LiteralPath $pnpmPackageSource -PathType Container)) {
   Write-Host 'Installing desktop dependencies...'
   Invoke-Pnpm -WorkingDirectory $projectRoot -Arguments @('install', '--frozen-lockfile')
 }
 if (-not (Test-Path -LiteralPath $builderCli -PathType Leaf)) {
   throw "electron-builder was not found: $builderCli"
 }
+if (-not (Test-Path -LiteralPath $updaterPackage -PathType Leaf)) {
+  throw "electron-updater was not found: $updaterPackage"
+}
+if (-not (Test-Path -LiteralPath $pnpmPackageSource -PathType Container)) {
+  throw "pnpm was not found: $pnpmPackageSource"
+}
 
-$harnessPackage = Join-Path $harnessRoot 'package.json'
 if (-not (Test-Path -LiteralPath $harnessPackage -PathType Leaf)) {
   Write-Host 'Preparing pinned Harness source...'
   & (Join-Path $PSScriptRoot 'prepare-harness.ps1') -OutputPath $harnessRoot
@@ -167,6 +201,16 @@ $nodeDestination = Join-Path $runtimeRoot 'node'
 New-Item -ItemType Directory -Path $nodeDestination -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $nodeSource 'node.exe') -Destination (Join-Path $nodeDestination 'node.exe')
 Copy-Item -LiteralPath (Join-Path $nodeSource 'LICENSE') -Destination (Join-Path $nodeDestination 'LICENSE')
+
+if (-not (Test-Path -LiteralPath $pnpmPackageSource -PathType Container)) {
+  throw "Packaged pnpm dependency was not found: $pnpmPackageSource"
+}
+if (-not (Test-Path -LiteralPath $pnpmShimSource -PathType Leaf)) {
+  throw "Packaged pnpm launcher was not found: $pnpmShimSource"
+}
+$pnpmDestination = Join-Path $runtimeRoot 'pnpm'
+Copy-Item -LiteralPath $pnpmPackageSource -Destination $pnpmDestination -Recurse
+Copy-Item -LiteralPath $pnpmShimSource -Destination (Join-Path $pnpmDestination 'pnpm.cmd')
 
 Write-Host "Building the Electron Windows $Target package..."
 Invoke-Pnpm -WorkingDirectory $projectRoot -Arguments @('run', 'build')

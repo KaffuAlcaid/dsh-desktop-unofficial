@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop-unofficial",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Unofficial desktop distribution for DeepSeek Harness",
   "author": "Kaffu_Alcaid",
   "license": "MIT",
@@ -26,10 +26,14 @@
     "package:portable:linux": "bash scripts/package-portable.sh",
     "start": "electron ."
   },
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  },
   "devDependencies": {
     "@types/node": "22.20.0",
     "electron": "43.4.0",
     "electron-builder": "26.15.3",
+    "pnpm": "11.7.0",
     "typescript": "6.0.3"
   }
 }

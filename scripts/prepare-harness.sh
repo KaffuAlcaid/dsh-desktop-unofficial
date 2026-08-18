@@ -13,6 +13,7 @@ plugin_sources=(
   "$project_root/harness-overrides/packages/client/ui-dsh-uo-reasoning-effort"
   "$project_root/harness-overrides/packages/client/ui-dsh-uo-model-input"
   "$project_root/harness-overrides/packages/client/ui-dsh-uo-system-prompt"
+  "$project_root/harness-overrides/packages/client/ui-dsh-uo-plugin-manager"
 )
 patch_paths=(
   "$project_root/harness-overrides/patches/0001-dsh-uo-upstream-status.patch"
@@ -21,6 +22,8 @@ patch_paths=(
   "$project_root/harness-overrides/patches/0004-pi-ai-developer-role.patch"
   "$project_root/harness-overrides/patches/0005-agent-preset-persona-api.patch"
   "$project_root/harness-overrides/patches/0006-dsh-uo-system-prompt-editor.patch"
+  "$project_root/harness-overrides/patches/0007-rc7-model-defaults.patch"
+  "$project_root/harness-overrides/patches/0008-dsh-uo-plugin-manager.patch"
 )
 
 [[ -f "$manifest_path" ]] || { echo "Harness manifest not found: $manifest_path" >&2; exit 1; }

@@ -1,0 +1,113 @@
+diff --git a/packages/bundle/web-app/cordis.patch.yml b/packages/bundle/web-app/cordis.patch.yml
+--- a/packages/bundle/web-app/cordis.patch.yml
++++ b/packages/bundle/web-app/cordis.patch.yml
+@@ -273,7 +273,10 @@
+     # cards. A namespace this deployment does not expose renders nothing.
+     - id: ui-settings-plugins
+       name: '@deepseek-ai/dsh-client-ui-settings-plugins'
+ 
++    - id: dsh-uo-plugin-manager
++      name: '@dsh-uo/client-ui-plugin-manager'
++
+     # Plan control: the composer plan seat over the plan projection + /plan channel.
+     - id: ui-plan
+       name: '@deepseek-ai/dsh-client-ui-plan'
+diff --git a/packages/bundle/web-app/package.json b/packages/bundle/web-app/package.json
+--- a/packages/bundle/web-app/package.json
++++ b/packages/bundle/web-app/package.json
+@@ -46,5 +46,6 @@
+   "dependencies": {
+     "@dsh-uo/client-ui-model-input": "workspace:^",
++    "@dsh-uo/client-ui-plugin-manager": "workspace:^",
+     "@dsh-uo/client-ui-reasoning-effort": "workspace:^",
+     "@dsh-uo/client-ui-system-prompt": "workspace:^",
+     "@dsh-uo/client-ui-upstream-status": "workspace:^",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -1264,6 +1264,9 @@ importers:
+       '@dsh-uo/client-ui-model-input':
+         specifier: workspace:^
+         version: link:../../client/ui-dsh-uo-model-input
++      '@dsh-uo/client-ui-plugin-manager':
++        specifier: workspace:^
++        version: link:../../client/ui-dsh-uo-plugin-manager
+       '@dsh-uo/client-ui-reasoning-effort':
+         specifier: workspace:^
+         version: link:../../client/ui-dsh-uo-reasoning-effort
+@@ -2001,7 +2004,40 @@ importers:
+       react-dom:
+         specifier: ^18.2.0
+         version: 18.3.1(react@18.3.1)
+ 
++  packages/client/ui-dsh-uo-plugin-manager:
++    devDependencies:
++      '@deepseek-ai/cordis':
++        specifier: workspace:^
++        version: link:../../../vendor/cordis
++      '@deepseek-ai/dsh-client-locale':
++        specifier: workspace:^
++        version: link:../locale
++      '@deepseek-ai/dsh-client-runtime':
++        specifier: workspace:^
++        version: link:../runtime
++      '@deepseek-ai/dsh-client-ui-primitives':
++        specifier: workspace:^
++        version: link:../ui-primitives
++      '@deepseek-ai/dsh-client-ui-settings':
++        specifier: workspace:^
++        version: link:../ui-settings
++      '@deepseek-ai/dsh-client-ui-slots':
++        specifier: workspace:^
++        version: link:../ui-slots
++      '@deepseek-ai/dsh-invariants':
++        specifier: workspace:^
++        version: link:../../runtime-diagnostics/invariants
++      '@types/react':
++        specifier: ~18.3.1
++        version: 18.3.31
++      react:
++        specifier: ^18.2.0
++        version: 18.3.1
++      react-dom:
++        specifier: ^18.2.0
++        version: 18.3.1(react@18.3.1)
++
+   packages/client/ui-dsh-uo-model-input:
+     devDependencies:
+       '@deepseek-ai/cordis':
+diff --git a/tsconfig.client.json b/tsconfig.client.json
+--- a/tsconfig.client.json
++++ b/tsconfig.client.json
+@@ -93,6 +93,7 @@
+     { "path": "./packages/client/ui-settings-general" },
+     { "path": "./packages/client/ui-settings-models" },
+     { "path": "./packages/client/ui-dsh-uo-model-input" },
++    { "path": "./packages/client/ui-dsh-uo-plugin-manager" },
+     { "path": "./packages/client/ui-dsh-uo-reasoning-effort" },
+     { "path": "./packages/client/ui-settings-plugin-inventory" },
+     { "path": "./packages/client/locale" },
+diff --git a/apps/cli/src/plugin.ts b/apps/cli/src/plugin.ts
+--- a/apps/cli/src/plugin.ts
++++ b/apps/cli/src/plugin.ts
+@@ -124,12 +124,18 @@ export function runPlugin(profile: string, args: readonly string[]): number {
+     process.stderr.write(`${NAME}: initialized profile ${profile} at ${dir}\n`)
+   }
+   const before = readProfileManifest(NAME, dir)
++  const desktopPnpmCli = process.env['DSH_DESKTOP_PNPM_CLI']?.trim()
++  const pnpmExecutable = desktopPnpmCli === undefined || desktopPnpmCli.length === 0
++    ? 'pnpm'
++    : process.execPath
++  const pnpmArgs = args.map(argument => anchorPathSpec(argument, process.cwd()))
++  if (pnpmExecutable !== 'pnpm') pnpmArgs.unshift(desktopPnpmCli as string)
+   // Windows resolves pnpm through its .cmd shim, which spawn() refuses
+   // without a shell since the CVE-2024-27980 hardening.
+-  const result = spawnSync('pnpm', args.map(argument => anchorPathSpec(argument, process.cwd())), {
++  const result = spawnSync(pnpmExecutable, pnpmArgs, {
+     cwd: dir,
+     stdio: 'inherit',
+-    shell: process.platform === 'win32',
++    shell: pnpmExecutable === 'pnpm' && process.platform === 'win32',
+   })
+   if (result.error !== undefined) {
+     const code = (result.error as NodeJS.ErrnoException).code

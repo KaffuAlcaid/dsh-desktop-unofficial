@@ -1,79 +1,7 @@
-diff --git a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
---- a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
-+++ b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
-@@ -178,14 +178,14 @@ export function SidebarRoot({
-         })}
-       </div>
- 
--      {/* Footer actions stack above Settings in both sidebar widths. */}
-+      {/* Settings stays compact; optional actions use the remaining row width. */}
-       <div className={css.footArea}>
--        <div className={css.footerActions}>
--          {renderSlot('sidebar.footer.action', { wide })}
--        </div>
-         <div className={css.settingsArea}>
-           {renderSlot('sidebar.settings', { wide })}
-         </div>
-+        <div className={css.footerActions}>
-+          {renderSlot('sidebar.footer.action', { wide })}
-+        </div>
-       </div>
-     </div>
-   )
-diff --git a/packages/client/ui-sidebar/src/client/SidebarRoot.module.css b/packages/client/ui-sidebar/src/client/SidebarRoot.module.css
---- a/packages/client/ui-sidebar/src/client/SidebarRoot.module.css
-+++ b/packages/client/ui-sidebar/src/client/SidebarRoot.module.css
-@@ -241,32 +241,39 @@
-   padding-left: 0;
- }
- 
--/* Footer seats: additive actions stack above Settings. Each occupant owns its
--   button geometry and hover chrome. */
-+/* Footer seats: Settings stays compact and additive actions use the remaining
-+   row width. Each occupant owns its button geometry and hover chrome. */
- .footArea {
-   flex: none;
-   display: flex;
--  flex-direction: column;
-+  flex-direction: row;
-+  align-items: center;
-+  gap: 4px;
- }
- 
--.settingsArea,
--.footerActions {
--  flex: none;
-+.settingsArea {
-+  flex: 0 1 auto;
-   min-width: 0;
--  width: 100%;
- }
- 
- .footerActions {
-+  flex: 1;
-+  min-width: 0;
-   display: flex;
-+  align-items: center;
-+  width: auto;
- }
- 
- .collapsed .footArea {
-+  flex-direction: column;
-   align-items: center;
-+  gap: 0;
- }
- 
- .collapsed .settingsArea,
- .collapsed .footerActions {
-   display: flex;
-+  flex: none;
-   justify-content: center;
-   width: auto;
- }
 diff --git a/packages/extensions/ui-cordis/src/client/CordisPanel.module.css b/packages/extensions/ui-cordis/src/client/CordisPanel.module.css
 --- a/packages/extensions/ui-cordis/src/client/CordisPanel.module.css
 +++ b/packages/extensions/ui-cordis/src/client/CordisPanel.module.css
-@@ -3,7 +3,8 @@
+@@ -3,9 +3,10 @@
  .layer {
    position: relative;
 -  flex: none;
@@ -83,7 +11,9 @@ diff --git a/packages/extensions/ui-cordis/src/client/CordisPanel.module.css b/p
    align-items: center;
 -  width: 100%;
 +  width: auto;
-   height: 49px;
+   height: 42px;
+   margin: 8px 0 0;
+ }
 @@ -13,5 +14,6 @@
  .footerButtons {
    display: flex;
@@ -91,60 +21,21 @@ diff --git a/packages/extensions/ui-cordis/src/client/CordisPanel.module.css b/p
 +  min-width: 0;
    width: 100%;
  }
-@@ -19,6 +21,7 @@
- .badge {
+@@ -20,6 +22,7 @@
    display: inline-flex;
    align-items: center;
    gap: 8px;
 +  min-width: 0;
-   width: 100%;
-   height: 49px;
-@@ -44,5 +47,6 @@
+   width: calc(100% + 4px);
+   height: 42px;
+   margin: 0 -2px;
+@@ -45,5 +48,6 @@
  .badgeLabel {
 +  flex: 1;
    min-width: 0;
    overflow: hidden;
    text-overflow: ellipsis;
    white-space: nowrap;
-diff --git a/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx b/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
---- a/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
-+++ b/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
-@@ -90,6 +90,11 @@ describe('SidebarRoot shell', () => {
-     // The settings seat rides the same wide flag (ui-settings renders the row).
-     expect(b.settingsOwner().wide).toBe(true)
-     expect(b.footerActionOwner().wide).toBe(true)
-+    const settings = screen.getByTestId('settings-seat')
-+    const action = screen.getByTestId('footer-action-seat')
-+    expect(
-+      settings.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING,
-+    ).toBeTruthy()
-     // Expanded: the request is a no-op (no accidental collapse).
-     b.regionOwner().expandSidebar()
-     expect(b.toggleSidebar).not.toHaveBeenCalled()
-diff --git a/packages/client/ui-sidebar/README.md b/packages/client/ui-sidebar/README.md
---- a/packages/client/ui-sidebar/README.md
-+++ b/packages/client/ui-sidebar/README.md
-@@ -12,7 +12,7 @@ During a live collapse, the shell holds the expanded content at its current wid
- 
- Scrollbars in the column are a pointer affordance: the shell rebinds ui-theme's [scrollbar indirection](../ui-theme/README.md) to `transparent` whenever the pointer is outside it, and keeps the thumb drawn for 2s after the pointer leaves, so a list nobody is pointing at carries no bar. The reservation that keeps rows from moving belongs to the scrolling region ([ui-workspace](../ui-workspace/README.md)), so revealing a thumb never reflows.
- 
--The foot is the `sidebar.settings` seat: the sidebar renders only the bottom-pinned layout slot and shares its column state (`wide`); ui-settings registers the trigger row and settings panel there.
-+The foot places `sidebar.settings` and `sidebar.footer.action` on one row while expanded: Settings stays compact and optional actions use the remaining width. Both seats receive the column state (`wide`); ui-settings registers the trigger row and settings panel, while independent plugins may register compact actions. The collapsed 56px rail stacks the seats, and an action may render nothing there.
- 
- The `/client` exports are the plugin body (`apply`/`inject`) plus the contract types only; SidebarRoot, the row components, and the tree derivation remain package-internal behind the slot registration.
- 
-diff --git a/packages/client/ui-sidebar/README.zh.md b/packages/client/ui-sidebar/README.zh.md
---- a/packages/client/ui-sidebar/README.zh.md
-+++ b/packages/client/ui-sidebar/README.zh.md
-@@ -12,7 +12,7 @@ New Session 会启动运行时的页面局部前端 Session Intent。运行时优
- 
- 栏内的滚动条是一种指针可供性：只要指针不在栏内，外壳就把 ui-theme 的[滚动条间接层](../ui-theme/README.md)重新绑定为 `transparent`；指针离开后滑块再保留 2 秒，因此没人指向的列表不会带着滚动条。避免行位移的空间预留属于滚动区域本身（[ui-workspace](../ui-workspace/README.md)），所以显示滑块不会引起重排。
- 
--页脚承载 `sidebar.settings`：侧边栏只渲染固定在底部的布局 slot，并共享其栏状态（`wide`）；ui-settings 在此注册触发行和设置面板。
-+侧边栏展开时，页脚把 `sidebar.settings` 与 `sidebar.footer.action` 放在同一行：设置保持紧凑，可选操作使用剩余宽度。两个 seat 都会接收栏状态（`wide`）；ui-settings 注册触发行和设置面板，独立插件可以注册紧凑操作。折叠后的 56px 轨道会纵向排列两个 seat，操作也可以在此不渲染任何内容。
- 
- `/client` 导出表层只包含插件主体（`apply`／`inject`）及约定类型；SidebarRoot、行组件和树派生仍由 slot 注册封装在包内。
- 
 diff --git a/packages/bundle/web-app/cordis.patch.yml b/packages/bundle/web-app/cordis.patch.yml
 --- a/packages/bundle/web-app/cordis.patch.yml
 +++ b/packages/bundle/web-app/cordis.patch.yml

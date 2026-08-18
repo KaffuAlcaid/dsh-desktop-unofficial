@@ -1,32 +1,40 @@
 .action {
   position: relative;
   flex: none;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  margin: 4px 0;
-  padding: 0;
+  gap: 8px;
+  width: calc(100% + 4px);
+  height: 42px;
+  margin: 4px -2px;
+  padding: 0 28px 0 8px;
+  box-sizing: border-box;
   border: none;
   border-radius: 12px;
   background: transparent;
   color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 22px;
   cursor: pointer;
+  overflow: hidden;
 }
 
 .action:hover {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.action:disabled {
-  cursor: wait;
+.actionLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .updateDot {
   position: absolute;
-  top: 5px;
-  right: 5px;
+  top: 8px;
+  right: 10px;
   width: 6px;
   height: 6px;
   border: 2px solid var(--dsw-specific-sidebar-fill);
@@ -35,7 +43,46 @@
 }
 
 .dialog {
-  width: min(460px, 100%);
+  width: min(620px, 100%);
+}
+
+.section {
+  padding: 0 0 20px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.section + .section {
+  padding-top: 20px;
+}
+
+.section:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.sectionTitle {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.summary {
+  margin: 0 0 10px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.summary[data-tone='error'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.footerActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .checking,
@@ -46,6 +93,44 @@
   font-size: 14px;
   line-height: 22px;
   color: var(--dsw-alias-label-secondary);
+}
+
+.progressRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.progressRow progress {
+  width: 100%;
+  height: 8px;
+}
+
+.releaseNotes {
+  margin-top: 14px;
+}
+
+.releaseNotes h4 {
+  margin: 0 0 6px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.releaseNotes p {
+  max-height: 120px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 19px;
 }
 
 .error {

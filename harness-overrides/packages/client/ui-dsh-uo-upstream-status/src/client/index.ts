@@ -26,7 +26,7 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action',
     id: 'dsh-uo-upstream-status',
-    order: 0,
+    order: 2,
     locale: NS,
   }, UpstreamStatusAction))
 }

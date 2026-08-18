@@ -124,7 +124,7 @@ jobs:
 
       - name: Build Windows packages
         shell: pwsh
-        run: .\scripts\package-portable.ps1 -Target all
+        run: .\scripts\package-portable.ps1 -HarnessPath .build\deepseek-harness -Target all
 
       - name: Verify Windows artifacts
         shell: pwsh
@@ -133,7 +133,9 @@ jobs:
         run: |
           $expected = @(
             "release\DSH-UO-$env:VERSION-win-x64.zip",
-            "release\DSH-UO-Setup-$env:VERSION-x64.exe"
+            "release\DSH-UO-Setup-$env:VERSION-x64.exe",
+            "release\DSH-UO-Setup-$env:VERSION-x64.exe.blockmap",
+            "release\latest.yml"
           )
           foreach ($path in $expected) {
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -148,6 +150,8 @@ jobs:
           path: |
             release/DSH-UO-${{ needs.metadata.outputs.version }}-win-x64.zip
             release/DSH-UO-Setup-${{ needs.metadata.outputs.version }}-x64.exe
+            release/DSH-UO-Setup-${{ needs.metadata.outputs.version }}-x64.exe.blockmap
+            release/latest.yml
           if-no-files-found: error
           retention-days: 1
 
@@ -209,6 +213,7 @@ jobs:
           appimage="release/DSH-UO-$VERSION-linux-x86_64.AppImage"
           test -f "$archive"
           unzip -t "$archive"
+          unzip -Z1 "$archive" | grep -Fx '.dsh-uo-portable'
           test -s "$appimage"
           test -x "$appimage"
 
@@ -253,8 +258,8 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           mapfile -t assets < <(find dist -maxdepth 1 -type f -print | sort)
-          if [ "${#assets[@]}" -ne 4 ]; then
-            echo "Expected four release assets, found ${#assets[@]}" >&2
+          if [ "${#assets[@]}" -ne 6 ]; then
+            echo "Expected six release assets, found ${#assets[@]}" >&2
             exit 1
           fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then

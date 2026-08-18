@@ -144,6 +144,50 @@ jobs:
         shell: pwsh
         run: .\scripts\package-portable.ps1 -Target all
 
+      - name: Smoke-test packaged Windows desktop
+        shell: pwsh
+        run: |
+          $smokeRoot = Join-Path $env:RUNNER_TEMP 'dsh-uo-smoke'
+          $electronOut = Join-Path $env:RUNNER_TEMP 'dsh-uo-electron.out.log'
+          $electronError = Join-Path $env:RUNNER_TEMP 'dsh-uo-electron.error.log'
+          $desktopLog = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'DSH-UO\logs\dsh-desktop.log'
+          New-Item -ItemType Directory -Path $smokeRoot -Force | Out-Null
+          Remove-Item -LiteralPath $desktopLog -Force -ErrorAction SilentlyContinue
+          $process = Start-Process `
+            -FilePath 'release\win-unpacked\DSH-Desktop-Unofficial.exe' `
+            -ArgumentList "--user-data-dir=$smokeRoot" `
+            -RedirectStandardOutput $electronOut `
+            -RedirectStandardError $electronError `
+            -PassThru
+          try {
+            $loaded = $false
+            foreach ($attempt in 1..90) {
+              if ((Test-Path -LiteralPath $desktopLog) `
+                  -and (Select-String -LiteralPath $desktopLog -SimpleMatch 'WebUI loaded' -Quiet)) {
+                $loaded = $true
+                break
+              }
+              if ($process.HasExited) {
+                throw "Packaged Windows desktop exited before loading WebUI (code $($process.ExitCode))"
+              }
+              Start-Sleep -Seconds 1
+              $process.Refresh()
+            }
+            if (-not $loaded) {
+              throw 'Packaged Windows desktop did not load WebUI within 90 seconds'
+            }
+          } finally {
+            if (-not $process.HasExited) {
+              & taskkill.exe /PID $process.Id /T /F
+              $process.WaitForExit()
+            }
+            foreach ($logPath in @($electronOut, $electronError)) {
+              if (Test-Path -LiteralPath $logPath) {
+                Get-Content -LiteralPath $logPath
+              }
+            }
+          }
+
       - name: Verify Windows artifacts
         shell: pwsh
         run: |

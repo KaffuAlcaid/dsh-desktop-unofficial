@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import '../src/client/index.ts'
 import { UpstreamStatusAction } from '../src/client/UpstreamStatusAction.tsx'
-import type { DshDesktopApi, HarnessUpstreamStatus } from '../src/client/desktop-api.ts'
+import type {
+  AppUpdateState, DshDesktopApi, HarnessUpstreamStatus,
+} from '../src/client/desktop-api.ts'
 import { en } from '../src/client/locales.ts'
 
 const t = (key: string, params?: Record<string, unknown>): string => {
@@ -24,8 +26,15 @@ function mount(wide: boolean) {
 }
 
 function installBridge(status: HarnessUpstreamStatus): DshDesktopApi {
+  const appUpdate = currentAppUpdate()
   const bridge: DshDesktopApi = {
     checkHarnessUpstream: vi.fn().mockResolvedValue({ ok: true, status }),
+    getAppUpdateState: vi.fn().mockResolvedValue(appUpdate),
+    checkAppUpdate: vi.fn().mockResolvedValue({ ok: true, state: appUpdate }),
+    downloadAppUpdate: vi.fn().mockResolvedValue({ ok: true, state: appUpdate }),
+    installAppUpdate: vi.fn().mockResolvedValue({ ok: true, state: appUpdate }),
+    openAppUpdatePage: vi.fn().mockResolvedValue({ ok: true, state: appUpdate }),
+    onAppUpdateState: vi.fn().mockReturnValue(() => {}),
   }
   Object.defineProperty(window, 'dshDesktop', { configurable: true, value: bridge })
   return bridge
@@ -44,9 +53,9 @@ describe('UpstreamStatusAction', () => {
   it('checks manually and renders the official commit in the shared modal', async () => {
     const bridge = installBridge(currentStatus())
     mount(true)
-    fireEvent.click(screen.getByRole('button', { name: 'View Harness upstream status' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
     await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: 'Harness upstream status' })).toBeTruthy()
+      expect(screen.getByRole('dialog', { name: 'Check for updates' })).toBeTruthy()
       expect(screen.getAllByText('47f94385')).toHaveLength(2)
       expect(screen.getByText('0.1.0-rc.6')).toBeTruthy()
     })
@@ -68,5 +77,22 @@ function currentStatus(): HarnessUpstreamStatus {
     commitsAhead: 0,
     npmPackage: '@deepseek-ai/dsh',
     latestPublishedVersion: '0.1.0-rc.6',
+  }
+}
+
+function currentAppUpdate(): AppUpdateState {
+  return {
+    mode: 'installer',
+    phase: 'current',
+    currentVersion: '0.1.0',
+    availableVersion: null,
+    releaseName: null,
+    releaseNotes: null,
+    releaseDate: null,
+    releaseUrl: 'https://github.com/KaffuAlcaid/dsh-desktop-unofficial/releases/latest',
+    percent: null,
+    transferred: null,
+    total: null,
+    error: null,
   }
 }

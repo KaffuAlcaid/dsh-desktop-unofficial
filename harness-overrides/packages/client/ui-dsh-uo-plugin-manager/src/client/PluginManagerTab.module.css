@@ -1,0 +1,331 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 760px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.install,
+.catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.install {
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  padding-bottom: 16px;
+}
+
+.install h3,
+.catalogHeading h3,
+.status,
+.error,
+.noOutput,
+.commandOutput h4 {
+  margin: 0;
+}
+
+.install h3,
+.catalogHeading h3 {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.npmForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.npmField {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.npmField > :last-child {
+  width: 100%;
+}
+
+.status,
+.error {
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.status {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.error {
+  border-left: 3px solid var(--dsw-alias-state-error-primary);
+  padding: 7px 10px;
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 7%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.catalogHeading {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 0 2px;
+}
+
+.catalogHeading span {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pluginList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pluginRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.pluginRow[data-status='invalid'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 38%, var(--dsw-alias-border-l2));
+}
+
+.pluginIdentity {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pluginIdentity strong {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 19px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pluginIdentity > span {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pluginStatus {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  border-radius: 5px;
+  padding: 1px 7px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.pluginStatus[data-status='active'] {
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent);
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.pluginStatus[data-status='invalid'] {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.iconButton {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+}
+
+.pluginErrors {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 8px 0 0 18px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+
+.log {
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  padding-top: 12px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.log > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+
+.log > ol {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.log > ol > li {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: var(--dsw-alias-bg-module-platform);
+}
+
+.log > ol > li[data-ok='false'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 32%, var(--dsw-alias-border-l2));
+}
+
+.logTitle {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.logTitle strong {
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+}
+
+.logTitle span {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.log li[data-ok='false'] .logTitle span {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.commandOutput {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.commandOutput section {
+  min-width: 0;
+}
+
+.commandOutput h4 {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 17px;
+  font-weight: 500;
+}
+
+.log pre {
+  max-height: 180px;
+  margin: 6px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.noOutput {
+  margin-top: 6px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.restarting {
+  display: flex;
+  min-height: 160px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .spinning {
+    animation: plugin-manager-spin 900ms linear infinite;
+  }
+}
+
+@keyframes plugin-manager-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 680px) {
+  .npmForm {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .npmField {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 460px) {
+  .npmForm {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .npmForm > button {
+    width: 100%;
+  }
+
+  .pluginRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .pluginStatus {
+    grid-column: 1;
+    justify-self: start;
+  }
+
+  .rowActions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+}

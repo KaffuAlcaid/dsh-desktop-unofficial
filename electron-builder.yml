@@ -21,6 +21,10 @@ extraResources:
 
 artifactName: DSH-UO-${version}-${os}-${arch}.${ext}
 afterPack: ./scripts/after-pack.mjs
+publish:
+  provider: github
+  owner: KaffuAlcaid
+  repo: dsh-desktop-unofficial
 
 win:
   executableName: DSH-Desktop-Unofficial

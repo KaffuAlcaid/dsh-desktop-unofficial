@@ -1,102 +1,222 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  Button, IconCheckOutline16, IconRefreshOutline16, IconWarningOutline16, Modal, Tooltip,
+  Button, IconCheckOutline16, IconDownloadOutline16, IconRefreshOutline16,
+  IconWarningOutline16, Modal,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { HarnessUpstreamState, HarnessUpstreamStatus } from './desktop-api.ts'
+import type {
+  AppUpdateState, HarnessUpstreamState, HarnessUpstreamStatus,
+} from './desktop-api.ts'
 import css from './UpstreamStatusAction.module.css'
 
 type UpstreamStatusActionProps =
   PropsRuntime<'sidebar.footer.action'> & PropsLocale<'dsh-uo.upstream'>
 
-type ViewState =
+type HarnessView =
   | { phase: 'idle' }
   | { phase: 'checking' }
   | { phase: 'success'; status: HarnessUpstreamStatus }
   | { phase: 'error'; message: string }
 
-/**
- * Render the expanded-sidebar upstream-status action and its dialog.
- * @param props - footer owner state and localized copy.
- * @returns null outside Electron and while the sidebar is collapsed.
- */
+/** Render the expanded-sidebar application and Harness update action. */
 export function UpstreamStatusAction({ wide, t }: UpstreamStatusActionProps) {
   const bridge = window.dshDesktop
   const [open, setOpen] = useState(false)
-  const [view, setView] = useState<ViewState>({ phase: 'idle' })
+  const [harnessView, setHarnessView] = useState<HarnessView>({ phase: 'idle' })
+  const [appUpdate, setAppUpdate] = useState<AppUpdateState>()
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (bridge === undefined) return
+    let active = true
+    const unsubscribe = bridge.onAppUpdateState((state) => {
+      if (active) setAppUpdate(state)
+    })
+    void bridge.getAppUpdateState().then(
+      state => { if (active) setAppUpdate(state) },
+      error => { if (active) setActionError(messageOf(error)) },
+    )
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [bridge])
 
   if (!wide || bridge === undefined) return null
 
   const check = async (): Promise<void> => {
-    setView({ phase: 'checking' })
-    const result = await bridge.checkHarnessUpstream()
-    setView(result.ok
-      ? { phase: 'success', status: result.status }
-      : { phase: 'error', message: result.error })
+    setHarnessView({ phase: 'checking' })
+    setActionError(null)
+    try {
+      const [harnessResult, updateResult] = await Promise.all([
+        bridge.checkHarnessUpstream(),
+        bridge.checkAppUpdate(),
+      ])
+      setHarnessView(harnessResult.ok
+        ? { phase: 'success', status: harnessResult.status }
+        : { phase: 'error', message: harnessResult.error })
+      setAppUpdate(updateResult.state)
+      if (!updateResult.ok && updateResult.state.error === null) {
+        setActionError(updateResult.error)
+      }
+    } catch (error) {
+      const message = messageOf(error)
+      setHarnessView({ phase: 'error', message })
+      setActionError(message)
+    }
   }
-  const status = view.phase === 'success' ? view.status : undefined
-  const tooltip = resolveTooltip(view, t)
-  const summary = resolveSummary(view, t)
+
+  const runAppAction = async (): Promise<void> => {
+    if (appUpdate === undefined) return
+    setActionError(null)
+    const action = resolveAppAction(appUpdate)
+    if (action === null) return
+    try {
+      const result = action === 'install'
+        ? await bridge.installAppUpdate()
+        : action === 'download'
+          ? await bridge.downloadAppUpdate()
+          : await bridge.openAppUpdatePage()
+      setAppUpdate(result.state)
+      if (!result.ok) setActionError(result.error)
+    } catch (error) {
+      setActionError(messageOf(error))
+    }
+  }
+
+  const appAction = appUpdate === undefined ? null : resolveAppAction(appUpdate)
+  const busy = harnessView.phase === 'checking'
+    || appUpdate?.phase === 'checking'
+    || appUpdate?.phase === 'downloading'
+    || appUpdate?.phase === 'installing'
+  const status = harnessView.phase === 'success' ? harnessView.status : undefined
+  const updateAvailable = appUpdate?.phase === 'available' || appUpdate?.phase === 'downloaded'
 
   return (
     <>
-      <Tooltip label={tooltip} side="top" delayMs={500}>
-        <button
-          type="button"
-          className={css.action}
-          aria-label={tooltip}
-          aria-haspopup="dialog"
-          aria-expanded={open}
-          disabled={view.phase === 'checking'}
-          onClick={() => {
-            setOpen(true)
-            void check()
-          }}
-        >
-          <StatusIcon view={view} />
-          {status !== undefined && hasUpstreamDifference(status) && <span className={css.updateDot} aria-hidden="true" />}
-        </button>
-      </Tooltip>
+      <button
+        type="button"
+        className={css.action}
+        aria-label={t('trigger')}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => {
+          setOpen(true)
+          void check()
+        }}
+      >
+        <StatusIcon appUpdate={appUpdate} harnessView={harnessView} />
+        <span className={css.actionLabel}>{t('trigger')}</span>
+        {(updateAvailable || (status !== undefined && hasUpstreamDifference(status)))
+          && <span className={css.updateDot} aria-hidden="true" />}
+      </button>
       <Modal
         open={open}
         onClose={() => { setOpen(false) }}
         title={t('title')}
         closeLabel={t('close')}
-        description={summary}
+        description={t('description')}
         className={css.dialog ?? ''}
         footer={(
-          <Button
-            variant="primary"
-            disabled={view.phase === 'checking'}
-            icon={<IconRefreshOutline16 className={view.phase === 'checking' ? css.spinning : undefined} />}
-            onClick={() => { void check() }}
-          >
-            {t('retry')}
-          </Button>
+          <div className={css.footerActions}>
+            {appAction !== null && (
+              <Button
+                variant="primary"
+                disabled={busy}
+                icon={appAction === 'download'
+                  ? <IconDownloadOutline16 />
+                  : <IconRefreshOutline16 />}
+                onClick={() => { void runAppAction() }}
+              >
+                {t(`app.action.${appAction === 'open' ? 'openPage' : appAction}`)}
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              disabled={busy}
+              icon={<IconRefreshOutline16 className={busy ? css.spinning : undefined} />}
+              onClick={() => { void check() }}
+            >
+              {t('retry')}
+            </Button>
+          </div>
         )}
       >
-        {view.phase === 'checking' && <div className={css.checking}>{t('checking')}</div>}
-        {view.phase === 'error' && <div className={css.error}>{view.message}</div>}
-        {status !== undefined && <StatusDetails status={status} t={t} />}
+        <section className={css.section}>
+          <h3 className={css.sectionTitle}>{t('app.title')}</h3>
+          {appUpdate === undefined
+            ? <div className={css.checking}>{t('app.loading')}</div>
+            : <AppUpdateDetails state={appUpdate} t={t} />}
+          {actionError !== null && <div className={css.error}>{actionError}</div>}
+        </section>
+        <section className={css.section}>
+          <h3 className={css.sectionTitle}>{t('harness.title')}</h3>
+          {harnessView.phase === 'idle' && <div className={css.checking}>{t('checking')}</div>}
+          {harnessView.phase === 'checking' && <div className={css.checking}>{t('checking')}</div>}
+          {harnessView.phase === 'error' && <div className={css.error}>{harnessView.message}</div>}
+          {status !== undefined && (
+            <>
+              <p className={css.summary}>{resolveHarnessSummary(harnessView, t)}</p>
+              <HarnessStatusDetails status={status} t={t} />
+            </>
+          )}
+        </section>
       </Modal>
     </>
   )
 }
 
-function StatusIcon({ view }: { view: ViewState }) {
-  if (view.phase === 'checking') return <IconRefreshOutline16 className={css.spinning} />
-  if (view.phase === 'error') return <IconWarningOutline16 />
-  if (view.phase === 'success'
-    && view.status.state === 'current'
-    && view.status.sourceVersion === view.status.latestPublishedVersion) return <IconCheckOutline16 />
-  if (view.phase === 'success' && (view.status.state === 'ahead' || view.status.state === 'diverged')) {
-    return <IconWarningOutline16 />
+function AppUpdateDetails({ state, t }: {
+  state: AppUpdateState
+  t: UpstreamStatusActionProps['t']
+}) {
+  const summary = resolveAppSummary(state, t)
+  return (
+    <>
+      <p className={css.summary} data-tone={state.phase === 'error' ? 'error' : undefined}>{summary}</p>
+      <dl className={css.details}>
+        <Detail label={t('app.field.currentVersion')} value={state.currentVersion} />
+        <Detail label={t('app.field.distribution')} value={t(`app.mode.${state.mode}`)} />
+        {state.availableVersion !== null && (
+          <Detail label={t('app.field.availableVersion')} value={state.availableVersion} />
+        )}
+      </dl>
+      {state.phase === 'downloading' && (
+        <div className={css.progressRow}>
+          <progress max={100} value={state.percent ?? 0} aria-label={summary} />
+          <span>{String(Math.round(state.percent ?? 0))}%</span>
+        </div>
+      )}
+      {state.releaseNotes !== null && (
+        <div className={css.releaseNotes}>
+          <h4>{t('app.releaseNotes')}</h4>
+          <p>{state.releaseNotes}</p>
+        </div>
+      )}
+      {state.error !== null && <div className={css.error}>{state.error}</div>}
+    </>
+  )
+}
+
+function StatusIcon({ appUpdate, harnessView }: {
+  appUpdate: AppUpdateState | undefined
+  harnessView: HarnessView
+}) {
+  if (harnessView.phase === 'checking' || appUpdate?.phase === 'checking') {
+    return <IconRefreshOutline16 className={css.spinning} />
+  }
+  if (harnessView.phase === 'error' || appUpdate?.phase === 'error') return <IconWarningOutline16 />
+  if (appUpdate?.phase === 'current'
+    && harnessView.phase === 'success'
+    && harnessView.status.state === 'current'
+    && harnessView.status.sourceVersion === harnessView.status.latestPublishedVersion) {
+    return <IconCheckOutline16 />
   }
   return <IconRefreshOutline16 />
 }
 
-function StatusDetails({ status, t }: {
+function HarnessStatusDetails({ status, t }: {
   status: HarnessUpstreamStatus
   t: UpstreamStatusActionProps['t']
 }) {
@@ -129,16 +249,33 @@ function Detail({ label, value, tone }: {
   )
 }
 
-function resolveTooltip(view: ViewState, t: UpstreamStatusActionProps['t']): string {
-  if (view.phase === 'error') return t('tooltip.error')
-  if (view.phase !== 'success') return t('trigger')
-  if (view.status.state === 'current' && hasPublishedDifference(view.status)) {
-    return t('tooltip.publishedDifferent')
-  }
-  return t(`tooltip.${view.status.state}`)
+function resolveAppAction(state: AppUpdateState): 'download' | 'install' | 'open' | null {
+  if (state.phase === 'downloaded' && state.mode === 'installer') return 'install'
+  if (state.phase !== 'available') return null
+  return state.mode === 'installer' ? 'download' : 'open'
 }
 
-function resolveSummary(view: ViewState, t: UpstreamStatusActionProps['t']): string {
+function resolveAppSummary(state: AppUpdateState, t: UpstreamStatusActionProps['t']): string {
+  if (state.mode === 'unsupported') return t('app.state.unsupported')
+  if (state.phase === 'available') {
+    const key = state.mode === 'portable'
+      ? 'app.state.availablePortable'
+      : 'app.state.availableInstaller'
+    return t(key, { version: state.availableVersion ?? '' })
+  }
+  if (state.phase === 'downloading') {
+    return t('app.state.downloading', {
+      version: state.availableVersion ?? '',
+      percent: Math.round(state.percent ?? 0),
+    })
+  }
+  if (state.phase === 'downloaded') {
+    return t('app.state.downloaded', { version: state.availableVersion ?? '' })
+  }
+  return t(`app.state.${state.phase}`)
+}
+
+function resolveHarnessSummary(view: HarnessView, t: UpstreamStatusActionProps['t']): string {
   if (view.phase === 'checking' || view.phase === 'idle') return t('checking')
   if (view.phase === 'error') return t('state.error')
   const status = view.status
@@ -170,4 +307,8 @@ function resolveDifference(status: HarnessUpstreamStatus, t: UpstreamStatusActio
 
 function shortSha(value: string): string {
   return value.slice(0, 8)
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
