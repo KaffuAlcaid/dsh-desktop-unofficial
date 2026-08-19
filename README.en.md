@@ -2,7 +2,14 @@
 
 English | [简体中文](README.md)
 
-[![CI](https://github.com/KaffuAlcaid/dsh-desktop-unofficial/actions/workflows/ci.yml/badge.svg)](https://github.com/KaffuAlcaid/dsh-desktop-unofficial/actions/workflows/ci.yml)
+> [!CAUTION]
+> **This project is discontinued and no longer maintained.**
+>
+> This repository will receive no further features, Harness compatibility updates, dependency or security updates, bug fixes, technical support, or releases. The existing source, documentation, and releases remain available only as a historical archive and are not recommended for new installations or continued long-term use.
+>
+> For an actively maintained DSH desktop client, use [DSH Desktop](https://github.com/anywhere-labs/deepseek-harness-desktop). Data, configuration, and plugins are not guaranteed to migrate directly between the two projects, so back up your data before switching. The rest of this document is retained as historical documentation for the final DSH UO release.
+
+[![Status: discontinued](https://img.shields.io/badge/status-discontinued-critical)](#dsh-uo)
 [![Latest release](https://img.shields.io/github/v/release/KaffuAlcaid/dsh-desktop-unofficial?display_name=tag)](https://github.com/KaffuAlcaid/dsh-desktop-unofficial/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -10,7 +17,7 @@ English | [简体中文](README.md)
 
 DSH UO is an unofficial desktop distribution of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). Release packages bundle the Harness Web UI, a pinned Harness source revision, and the Node.js runtime so that the application can be used as an installed desktop program.
 
-DSH UO also adds interfaces for application updates, user plugin management, model input capabilities, reasoning effort, system-prompt editing, and Harness upstream status. DSH UO is an early preview, and the upstream Harness project is in developer preview. Future versions may contain breaking changes. This project is independently maintained and is not an official DeepSeek desktop client.
+DSH UO also adds interfaces for application updates, user plugin management, model input capabilities, reasoning effort, system-prompt editing, and Harness upstream status. DSH UO was an early preview when maintenance ended, and the upstream Harness project remains in developer preview. Later upstream versions may be incompatible with the final DSH UO release. This project was independently maintained and is not an official DeepSeek desktop client.
 
 ## Screenshots
 
@@ -36,6 +43,8 @@ Most users should download a package from [GitHub Releases](https://github.com/K
 | Linux x64 | `DSH-UO-<version>-linux-x64.zip` | Extracted application directory |
 
 The `.blockmap` and `latest.yml` assets are metadata used by NSIS application updates and do not need to be downloaded manually.
+
+See the [Code signing and privacy policy](docs/code-signing-policy.md#english) for the signing plan, maintainer responsibilities, and network behavior. Treat a file as signed only when its specific Release identifies it as signed and the file contains a verifiable signature.
 
 GitHub Releases may be slow or inaccessible on some networks in mainland China. The project currently has no official domestic mirror or alternative download site, so GitHub Releases is the only official publication source. Do not download the application from an unknown file-sharing site, proxy, or repackaging page.
 

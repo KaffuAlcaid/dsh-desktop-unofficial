@@ -2,7 +2,14 @@
 
 [English](README.en.md) | 简体中文
 
-[![CI](https://github.com/KaffuAlcaid/dsh-desktop-unofficial/actions/workflows/ci.yml/badge.svg)](https://github.com/KaffuAlcaid/dsh-desktop-unofficial/actions/workflows/ci.yml)
+> [!CAUTION]
+> **本项目已停止维护和更新。**
+>
+> 本仓库不会再提供功能更新、Harness 兼容性适配、依赖或安全更新、错误修复、技术支持及新版本发布。现有源码、文档和 Release 仅供历史存档与参考，不建议继续用于新安装或长期使用。
+>
+> 需要仍在维护的 DSH 桌面客户端，请使用 [DSH Desktop](https://github.com/anywhere-labs/deepseek-harness-desktop)。两个项目的数据、配置和插件不保证可以直接迁移，切换前请自行备份。下文保留最后一个 DSH UO 发行版本的历史说明。
+
+[![状态：已停止维护](https://img.shields.io/badge/status-discontinued-critical)](#dsh-uo)
 [![最新版本](https://img.shields.io/github/v/release/KaffuAlcaid/dsh-desktop-unofficial?display_name=tag)](https://github.com/KaffuAlcaid/dsh-desktop-unofficial/releases/latest)
 [![许可证：MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -10,7 +17,7 @@
 
 DSH UO 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方桌面发行版。发行包将 Harness WebUI、固定提交的 Harness 源码和 Node.js 运行时打包在一起，安装后即可作为桌面应用使用。
 
-DSH UO 还增加了应用更新、用户插件管理、模型输入能力、思考强度、系统提示词编辑和 Harness 上游状态等界面。项目目前处于早期预览阶段，上游 Harness 也处于开发者预览阶段，后续版本可能包含不兼容变更。本项目由社区独立维护，不是 DeepSeek 官方桌面客户端。
+DSH UO 还增加了应用更新、用户插件管理、模型输入能力、思考强度、系统提示词编辑和 Harness 上游状态等界面。项目停止维护前处于早期预览阶段，上游 Harness 也处于开发者预览阶段，后续上游版本可能与最后一个 DSH UO 版本不兼容。本项目曾由社区独立维护，不是 DeepSeek 官方桌面客户端。
 
 ## 界面预览
 
@@ -36,6 +43,8 @@ Harness 上游状态：
 | Linux x64 | `DSH-UO-<version>-linux-x64.zip` | 解压后运行的应用目录 |
 
 Releases 中的 `.blockmap` 和 `latest.yml` 是 NSIS 应用更新所需的元数据，普通用户无需单独下载。
+
+项目的签名计划、维护者职责和联网行为见 [Code signing policy（代码签名与隐私政策）](docs/code-signing-policy.md#简体中文)。只有具体 Release 明确列出已签名文件，且文件包含可验证的签名时，才能将其视为已签名。
 
 中国大陆部分网络环境访问 GitHub Releases 可能较慢。目前项目没有官方国内镜像或备用下载站，GitHub Releases 是唯一官方发布来源。请不要从来路不明的网盘、代理站或重新打包页面下载程序。
 
